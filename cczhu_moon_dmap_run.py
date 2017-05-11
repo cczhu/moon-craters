@@ -1,7 +1,5 @@
 """
-Charles's attempt at creating a convnet that translates an image
-into a density map, which can then be postprocessesed to give a
-crater count.
+Charles's attempt at creating an I/O pipeline and convnet for crater counting.
 """
 
 ################ IMPORTS ################
