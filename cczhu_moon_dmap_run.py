@@ -4,6 +4,7 @@ Charles's attempt at creating an I/O pipeline and convnet for crater counting.
 
 ################ IMPORTS ################
 
+
 # Past-proofing
 from __future__ import absolute_import, division, print_function
 
@@ -13,6 +14,7 @@ import sys
 import glob
 #import cv2
 import datetime
+import pickle
 
 # I/O and math stuff
 import pandas as pd
@@ -23,100 +25,83 @@ sys.path.append("/home/m/mhvk/czhu/moon_craters")
 import make_density_map as densmap
 
 # NN and CV stuff
-from sklearn.model_selection import KFold, train_test_split
+from sklearn.model_selection import train_test_split #, Kfold
 from keras import backend as K
 K.set_image_dim_ordering('tf')
 import keras
-#from keras.preprocessing.image import ImageDataGenerator
 import keras.preprocessing.image as kpimg
+from keras.callbacks import EarlyStopping #, ModelCheckpoint
 
-################ DATA READ-IN FUNCTIONS (FROM moon4.py and moon_vgg16_1.2.2.py) ################
 
-def get_im_csv(path, args):
-    """Grabs image (greyscale) using PIL.Image, converts it to
-    np.array, then grabs craters as pd.DataFrame
+################ DATA READ-IN FUNCTIONS ################
+
+
+def read_and_normalize_data(path, Xtr, Ytr, Xte, Yte, normalize=True):
+    """Reads and returns input data.
     """
-    img = Image.open(path).convert('L')
-    img = np.asanyarray(img.resize(args["imgshp"]))
-    craters = pd.read_csv(path.split(".png")[0] + ".csv")
-    craters.drop( np.where(craters["Diameter (pix)"] < args["c_pix_cut"])[0], 
-                        inplace=True )
-    craters.reset_index(drop=True, inplace=True)
-    return img, craters
-
-
-def load_data(path, args):
-    """Chain-loads data.
-    """
-    X = []
-    X_id = []
-    ctrs = []
-    files = glob.glob('%s*.png'%path)
-    print("number of files: %d"%(len(files)))
-    for fl in files:
-        flbase = os.path.basename(fl)
-        img, craters  = get_im_csv(fl, args)
-        X.append(img)
-        X_id.append(fl)
-        ctrs.append(craters)
-    return X, ctrs, X_id
-
-
-def read_and_normalize_data(path, args, data_flag):
-    """Reads and normalizes input data.  Removes craters below some
-    minimum size.
-    """
-    print("For {0:s} data".format(data_flag))
-    X, ctrs, X_id = load_data(path, args)
-    # Convert to np.array and normalize
-    X = np.array(X, dtype=np.float32) / 255.
-    print('Shape:', X.shape)
-    return X, ctrs, X_id
+    Xtrain = np.load(path + Xtr)
+    Ytrain = np.load(path + Ytr)
+    Xtest = np.load(path + Xte)
+    Ytest = np.load(path + Yte)
+    if normalize:
+        Xtrain /= 255.
+        Xtest /= 255.
+    print("Loaded data.  N_samples: train = "
+          "{0:d}; test = {1:d}".format(Xtrain.shape[0], Xtest.shape[0]))
+    print("Image shapes: X =", Xtrain.shape[1:], \
+                                "Y = {1:d}", Ytrain.shape[1:])
+    return Xtrain, Ytrain, Xtest, Ytest
 
 
 ################ TRAINING ROUTINE ################
 
-def run_cross_validation_process_test(info_string, model):
-	batch_size = 32
-	num_fold = 0
-	yfull_test = []
-	test_id = []
 
-	test_data,test_target, test_id = read_and_normalize_test_data()
-	test_prediction = model.predict(test_data, batch_size=batch_size, verbose=2)
+def train_test_model(Xtrain, Ytrain, Xtest, Ytest, lambd, args):
 
-	result1 = pd.Series(test_id, test_prediction)
-	now = datetime.datetime.now()
-	sub_file = 'submission_' + info + '_' + str(now.strftime("%Y-%m-%d-%H-%M")) + '.csv'
-	result1.to_csv(sub_file, index=False)	
+    Xtr, Xval, Ytr, Yval = train_test_split(Xtrain, Ytrain, test_size=args["test_size"], 
+                                                    random_state=args["random_state"])
+    gen = MoonDataGenerator(width_shift_range=1./args["imgshp"][1],
+                         height_shift_range=1./args["imgshp"][0],
+                         fill_mode='constant',
+                         horizontal_flip=True, vertical_flip=True)
 
-	#	score = mean_absolute_error(test_target, test_prediction)
-	#	print('Holdout set score is: ', score)
+    model = cczhu_cnn(args)
+    model.fit_generator( gen.flow(Xtr, Ytr, batch_size=args["batchsize"], shuffle=True),
+                        samples_per_epoch=len(Xtr), nb_epoch=args["N_epochs"], 
+                        validation_data=gen.flow(Xval, Yval, batch_size=args["batchsize"]),
+                        nb_val_samples=len(Xval), verbose=1,
+                        callbacks=[EarlyStopping(monitor='val_loss', patience=3, verbose=0)])
+
+    #model_name = ''
+    #model.save_weights(model_name)     #save weights of the model
+     
+    test_predictions = model.predict(test_data.astype('float32'), batch_size=batch_size, verbose=2)
+    return mean_absolute_error(Ytest, Ypred)  #calculate test score
 
 
-def run_training(train_data, train_ctrs, test_data, test_ctrs, args):
-    
+def print_details(args, lambd):
+    print("Learning rate = {0:e}; Batch size = {1:d}, lambda = {2:d}".format( \
+            args["learn_rate"], args["batchsize"], lambd))
+    print("Number of epochs = {0:d}, N_training_samples = {1:d}".format( \
+            args["N_epochs"], args["N_sub_train"]))
 
 
-def run_cross_validation(train_data, train_ctrs, test_data, test_ctrs, args):
+def run_cross_validation(Xtrain, Ytrain, Xtest, Ytest, args):
 
-    #Squash train_target (e.g. from 0-10 -> 0-1 crater counts)
-    #train_target = np.log10(1+train_target)
+    # Get randomized lambda values for L2 regularization.  Always have 10^0 as baseline.
+    lambd_space = np.logspace(args["CV_lambd_range"][0], 
+                                    args["CV_lambd_range"][1], 10*args["CV_lambd_N"])
+    lambd_arr = np.r_[np.random.choice(lambd_space, args["CV_lambd_N"]),
+                    np.array([0]))
 
-    #Iterate
-    N_runs = 6
-    lmbda = random.sample(np.logspace(-3,1,5*N_runs), N_runs-1)
-    dropout = random.sample(np.linspace(0,0.8,5*N_runs), N_runs-1)
-    lmbda.append(0), dropout.append(0)  #ensure we have a baseline comparison
-    for i in range(N_runs):
-        l,d = lmbda[i], dropout[i]
-        score = train_test_model(train_data,train_target,test_data,test_target,learn_rate,batch_size,l,d,nb_epoch,n_train_samples,im_width,im_height,n_classes,rs)
-        print '###################################'
-        print '##########END_OF_RUN_INFO##########'
-        print('\nTest Score is %f.\n'%score)
-        print 'learning_rate=%e, batch_size=%d, lambda=%e, dropout=%f, n_epoch=%d, n_train_samples=%d, n_classes=%d, random_state=%d, im_width=%d, im_height=%d'%(learn_rate,batch_size,l,d,nb_epoch,n_train_samples,n_classes,rs,im_width,im_height)
-        print '###################################'
-        print '###################################'
+    for i, lambd in enumerate(lambd_arr):
+        test_score = train_test_model(Xtrain, Ytrain, Xtest, Ytest, lambd, args)
+        print('#####################################')
+        print('########## END OF RUN INFO ##########')
+        print("\nTest Score: {0:e}\n".format(test_score))
+        print_details(args, lambd)
+        print('#####################################')
+        print('#####################################')
 
 
 ################ MAIN ################
@@ -126,14 +111,15 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Keras-based CNN for mapping crater images to density maps.')
-    parser.add_argument('--path', type=str, required=False,
-                        help='Filepath of lola pngs and csvs', default="./")
+    parser.add_argument("path", 
+    parser.add_argument("Xtrain", type=str, help="Training input npy file")
+    parser.add_argument("Xtest", type=str, help="Testing input npy file")
+    parser.add_argument("Ytrain", type=str, help="Training target npy file")
+    parser.add_argument("Ytest", type=str, help="Testing target npy file")
     parser.add_argument('--learn_rate', type=float, required=False,
                         help='Learning rate', default=0.0001)
-    parser.add_argument('--imshape', nargs=2, type=int, required=False,
-                        help='[height, length] of input image to convnet')
-    parser.add_argument('--crater_cutoff', type=int, required=False,
-                        help='Crater pixel diameter cutoff', default=3)
+#    parser.add_argument('--crater_cutoff', type=int, required=False,
+#                        help='Crater pixel diameter cutoff', default=3)
     parser.add_argument('--batchsize', type=int, required=False,
                         help='Crater pixel diameter cutoff', default=32)
     parser.add_argument('--lambd', type=float, required=False,
@@ -142,6 +128,10 @@ if __name__ == '__main__':
                         help='Number of training epochs', default=30)
     parser.add_argument('--f_samp', type=int, required=False,
                         help='Random fraction of samples to use', default=1.)
+    parser.add_argument('--dumpweights', type=str, required=False,
+                        help='Filename to dump NN weights to file')
+    parser.add_argument('--dumpargs', type=str, required=False,
+                        help='Filename to dump arguments into pickle')
 
 
 #    parser.add_argument('--lu_csv_path', metavar='lupath', type=str, required=False,
@@ -153,56 +143,55 @@ if __name__ == '__main__':
 #    parser.add_argument('--amt', type=int, default=7500, required=False,
 #                        help='Number of images each thread will make (multiply by number of \
 #                        threads for total number of images produced).')
+
     in_args = parser.parse_args()
-
-    # Declare master dictionary of input variables
-    args = {}
-
-    # Load constants from user
-    args["path"] = args.path
-    args["learn_rate"] = in_args.learning_rate
-    args["c_pix_cut"] = in_args.crater_cutoff
-
-    args["imgshp"] = (300, 300)
-    if in_args.imshape:
-        args["imgshp"] = in_args.imshape
-
-    args["batchsize"] = in_args.batchsize
-    args["lambda"] = in_args.lambd
-    args["epochs"] = in_args.epochs
-    args["f_samp"] = in_args.f_samp
 
     # Print Keras version, just in case
     print('Keras version: {0}'.format(keras.__version__))
 
-    # Try to load data from working directory
-    # The .npy stuff doesn't work for pandas dataframes
-#    try:
-#        train_data = np.load(args["path"] + '/training_set/train_data.npy')
-#        train_ctrs = np.load(args["path"] + '/training_set/train_ctrs.npy')
-#        test_data = np.load(args["path"] + '/test_set/test_data.npy')
-#        test_ctrs = np.load(args["path"] + '/test_set/test_ctrs.npy')
-#        print("Successfully loaded .npy files from working directory.")
-#    except:
-    print("Can't find .npy files locally; reading in from args.path.")
-    train_data, train_ctrs, train_id = \
-                read_and_normalize_data(args["path"] + "/training_set/", 
-                                        args, "train")
-    test_data, test_ctrs, test_id = \
-                read_and_normalize_data(args["path"] + "/test_set/", 
-                                        args, "test")
-#        np.save(args["path"] + '/training_set/train_data.npy', train_data)
-#        np.save(args["path"] + '/training_set/train_ctrs.npy', train_ctrs)
-#        np.save(args["path"] + '/test_set/test_data.npy', test_data)
-#        np.save(args["path"] + '/test_set/test_ctrs.npy', test_ctrs)
+    # Read in data, normalizing input images
+    Xtrain, Ytrain, Xtest, Ytest = read_data(in_args.path, in_args.Xtrain, in_args.Ytrain, 
+                                        in_args.Xtest, in_args.Ytest, normalize=True)
+
+    # Declare master dictionary of input variables
+    args = {}
+
+    # Get image and target sizes
+    args["imgshp"] = tuple(Xtrain.shape[1:])
+    args["tgtshp"] = tuple(Ytrain.shape[1:])
+
+    # Load constants from user
+    args["path"] = args.path
+    args["learn_rate"] = in_args.learning_rate
+    #args["c_pix_cut"] = in_args.crater_cutoff
+
+    args["batchsize"] = in_args.batchsize
+    args["lambda"] = in_args.lambd
+    args["N_epochs"] = in_args.epochs
+    args["f_samp"] = in_args.f_samp
+
+    args["dumpweights"] = in_args.dumpweights
 
     # Calculate next largest multiple of batchsize to N_train*f_samp
     # Then use to obtain subset
-    N_sub = int(args["batchsize"] * np.ceil( train_data.shape[0] * \
+    args["N_sub_train"] = int(args["batchsize"] * np.ceil( Xtrain.shape[0] * \
                                         args["f_samp"] / args["batchsize"] ))
-    subset = np.random.choice(train_data.shape[0], size=N_sub)
-    train_data = train_data[subset]
-    train_target = train_target[subset]
+    args["sub_train"] = np.random.choice(X.shape[0], size=args["N_sub_train"])
+    Xtrain = Xtrain[args["sub_train"]]
+    Ytrain = Ytrain[args["sub_train"]]
+
+
+    # Cross-validation parameters that could be user-selectable at a later date.
+    args["CV_lambd_N"] = 10             # Number of L2 regularization coefficients to try
+    args["CV_lambd_range"] = (-3, 0)    # Log10 range of L2 regularization coefficients
+    args["random_state"] = None         # Random initializer for train_test_split
+    args["test_size"] = 0.2             # train_test_split fraction of examples for validation
+
+
+    # CALL TRAIN TEST
+
+    if in_args.dumpargs:
+        pickle.dump( args, open(in_args.dumpargs, 'wb') )
 
 
 
@@ -224,17 +213,6 @@ if __name__ == '__main__':
 
 
 
-
-
-
-
-
-    gen = ImageDataGenerator(#channel_shift_range=30,                    #R,G,B shifts
-                             #rotation_range=180,                        #rotations
-                             width_shift_range=1./im_width,
-                             height_shift_range=1./im_height,
-                             fill_mode='constant',
-                             horizontal_flip=True,vertical_flip=True)    #flips
 
 class MoonImageGen(object)
     """Heavily modified version of keras.preprocessing.image.ImageDataGenerator.
