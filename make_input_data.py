@@ -40,16 +40,22 @@ import re
 
 def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
                                 sortlat=True):
-    """Reads Goran Salamuniccar crater file CSV.
+    """Reads LU78287GT (Salamuniccar et al. 2014) crater file CSV, converted
+    from the xlsx file found at `https://astrogeology.usgs.gov/search/map/
+    Moon/Research/Craters/GoranSalamuniccar_MoonCraters`.  That file also
+    contains LU60645GT, which this function is also compatible with.
 
     Parameters
     ----------
     filename : str
         csv file of craters
-    dropfeatures : bool
-        If true, drop sub-features of craters (listed with
+    dropfeatures : bool, optional
+        If true, drop satellite craters (those listed with
         "A", "B", "C"...), leaving only the whole crater 
-        (listed as "r").
+        (listed as "r").  Only useful if you want to (crudely)
+        remove secondary impacts.
+    sortlat : bool, optional
+        If `True`, order catalog by latitude.
 
     Returns
     -------
@@ -57,18 +63,19 @@ def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
         Craters data frame.
     """
     # Read in crater names
-    craters_names = ["ID", "Long", "Lat", "Radius (deg)", 
-                        "Diameter (km)", "D_range", "p", "Name"]
+    craters_names = ["ID", "Long", "Lat", "Radius (deg)",
+                     "Diameter (km)", "D_range", "p", "Name"]
     craters_types = [str, float, float, float, float, float, int, str]
-    craters = pd.read_csv(open(filename, 'r'), sep=',', 
-        usecols=list(range(8)), header=0, engine="c", encoding = "ISO-8859-1",
-        names=craters_names, dtype=dict(zip(craters_names, craters_types)))
+    craters = pd.read_csv(
+        open(filename, 'r'), sep=',', usecols=list(range(8)), header=0,
+        engine="c", encoding="ISO-8859-1", names=craters_names,
+        dtype=dict(zip(craters_names, craters_types)))
 
     # Truncate cyrillic characters
     craters["Name"] = craters["Name"].str.split(":").str.get(0)
 
     if dropfeatures:
-        DropCraterFeatures(craters)
+        DropSatelliteCraters(craters)
 
     if sortlat:
         craters.sort_values(by='Lat', inplace=True)
@@ -77,10 +84,10 @@ def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
     return craters
 
 
-def DropCraterFeatures(craters):
+def DropSatelliteCraters(craters):
     """Drops named crater sub-features (listed with
-        "A", "B", "C"...), leaving only the whole crater 
-        (listed as "r").
+    "A", "B", "C"...), leaving only the whole crater 
+    (listed as "r").
 
     Parameters
     ----------
@@ -95,26 +102,29 @@ def DropCraterFeatures(craters):
         return False
 
     # Find all crater names that ends with A - Z
-    basenames = \
-            craters.loc[craters["Name"].notnull(), "Name"].apply(match_end)
+    basenames = (
+        craters.loc[craters["Name"].notnull(), "Name"].apply(match_end))
     drop_index = basenames[basenames].index
     craters.drop(drop_index, inplace=True)
 
 
 def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
-    """Reads crater file CSV from Alan (LROC 5 - 20 km craters)
+    """Reads LROC 5 - 20 km crater catalog CSV (obtained by
+    Alan Jackson).
 
     Parameters
     ----------
     filename : str
         csv file of craters
+    sortlat : bool, optional
+        If `True` (default), order catalog by latitude.
 
     Returns
     -------
     craters : pandas.DataFrame
         Craters data frame.
     """
-    craters = pd.read_csv(filename, header=0)
+    craters = pd.read_csv(filename, header=0, usecols=list(range(2, 6)))
     if sortlat:
         craters.sort_values(by='Lat', inplace=True)
         craters.reset_index(inplace=True, drop=True)
@@ -122,10 +132,38 @@ def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
     return craters
 
 
-def ReadCombinedCraterCSV(filealan="./alanalldata.csv", filelu="./LU78287GT.csv", 
-                            dropfeatures=False):
-    """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters that
-    are > 20 km.
+def ReadHeadCraterCSV(filename="./LolaLargeCraters.csv",
+                      sortlat=True):
+    """Reads Head et al. 2010 (`http://adsabs.harvard.edu/
+    abs/2010Sci...329.1504H`) >= 20 km diameter crater catalog
+    CSV.
+
+    Parameters
+    ----------
+    filename : str, optional
+        csv file of craters
+    sortlat : bool, optional
+        If `True` (default), order catalog by latitude.
+
+    Returns
+    -------
+    craters : pandas.DataFrame
+        Craters data frame.
+    """
+    craters = pd.read_csv(filename, header=0, 
+                          names=['Long', 'Lat', 'Diameter (km)'])
+    if sortlat:
+        craters.sort_values(by='Lat', inplace=True)
+        craters.reset_index(inplace=True, drop=True)
+
+    return craters
+
+
+def ReadLROCLUCombinedCraterCSV(filealan="./alanalldata.csv",
+                                filelu="./LU78287GT.csv", 
+                                dropfeatures=False):
+    """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters
+    that are > 20 km.
 
     Parameters
     ----------
@@ -134,9 +172,10 @@ def ReadCombinedCraterCSV(filealan="./alanalldata.csv", filelu="./LU78287GT.csv"
     filelu : str
         Salamuniccar crater file location
     dropfeatures : bool
-        If true, drop sub-features of craters (listed with
+        If true, drop satellite craters (those listed with
         "A", "B", "C"...), leaving only the whole crater 
-        (listed as "r").
+        (listed as "r").  Only useful if you want to (crudely)
+        remove secondary impacts.
 
     Returns
     -------
@@ -156,7 +195,7 @@ def ReadCombinedCraterCSV(filealan="./alanalldata.csv", filelu="./LU78287GT.csv"
     craters["Name"] = craters["Name"].str.split(":").str.get(0)
 
     if dropfeatures:
-        DropCraterFeatures(craters)
+        DropSatelliteCraters(craters)
 
     craters.drop(["Radius (deg)", "D_range", "p", "Name"], axis=1, inplace=True)
     craters = craters[craters["Diameter (km)"] > 20]
@@ -166,6 +205,37 @@ def ReadCombinedCraterCSV(filealan="./alanalldata.csv", filelu="./LU78287GT.csv"
     craters = pd.concat([craters, craters_alan], axis=0, ignore_index=True,
                             copy=True)
 
+    craters.sort_values(by='Lat', inplace=True)
+    craters.reset_index(inplace=True, drop=True)
+
+    return craters
+
+
+def ReadLROCHeadCombinedCraterCSV(filelroc="./alanalldata.csv",
+                                  filehead="./LolaLargeCraters.csv",
+                                  sortlat=True):
+    """Combines LROC 5 - 20 km crater dataset with Head >= 20 km dataset.
+
+    Parameters
+    ----------
+    filelroc : str, optional
+        LROC crater file location
+    filehead : str, optional
+        Head et al. crater file location
+    sortlat : bool, optional
+        If `True` (default), order catalog by latitude.
+
+    Returns
+    -------
+    craters : pandas.DataFrame
+        Craters data frame.
+    """
+    ctrs_head = ReadHeadCraterCSV(filename=filehead, sortlat=False)
+    ctrs_head = ctrs_head[ctrs_head["Diameter (km)"] > 20]
+    ctrs_lroc = ReadAlanCraterCSV(filename=filelroc, sortlat=False)
+    ctrs_lroc.drop(["tag"], axis=1, inplace=True)
+    craters = pd.concat([ctrs_lroc, ctrs_head], axis=0, ignore_index=True,
+                        copy=True)
     craters.sort_values(by='Lat', inplace=True)
     craters.reset_index(inplace=True, drop=True)
 

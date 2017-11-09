@@ -32,7 +32,7 @@ import gc
 
 
 source_image_path = "/home/cczhu/public_html/LOLA_Global_20k.png"     # Source image path
-lu_csv_path = "./LU78287GT.csv"                     # Salamuniccar crater dataset csv path
+head_csv_path = "./LolaLargeCraters.csv"            # Head dataset csv path
 alan_csv_path = "./alanalldata.csv"                 # LROC crater dataset (from Alan) csv path
 outhead = "/home/cczhu/cratering/test/train/lola"   # Output filepath and file header (if 
                                                     # outhead = "./out/lola", files will have extension
@@ -192,9 +192,7 @@ def make_dmaps(files, maketype, outshp, minpix, dmap_args, savetiff=False):
         dmap_args)
 
     X = np.empty((len(files),) + cX0.shape, dtype=np.uint8)
-    X_id = []
     Y = np.empty((len(files),) + cY0.shape, dtype=np.float32)
-    Y_id = []
 
     #files = sorted([fn for fn in glob.glob('%s*.png'%path)
     #         if (not os.path.basename(fn).endswith('mask.png') and
@@ -205,15 +203,13 @@ def make_dmaps(files, maketype, outshp, minpix, dmap_args, savetiff=False):
     for i, fl in enumerate(files):
         cX, cY = load_img_make_target(fl, maketype, outshp, minpix, dmap_args)
         X[i] = cX
-        X_id.append(fl)
         Y[i] = cY
         mname = fl.split(".png")[0] + maketype + ".tiff"
-        Y_id.append(mname)
         if savetiff:
             imgo = Image.fromarray(cY)
             imgo.save(mname);
 
-    return X, Y, X_id, Y_id
+    return X, Y
 
 
 ########################### Script ###########################
@@ -241,9 +237,8 @@ if __name__ == '__main__':
     if sub_cdim != source_cdim:
         img = mkin.InitialImageCut(img, source_cdim, sub_cdim)
 
-    craters = mkin.ReadCombinedCraterCSV(filealan=alan_csv_path, 
-                                         filelu=lu_csv_path,
-                                         dropfeatures=True)
+    craters = mkin.ReadLROCHeadCombinedCraterCSV(filelroc=alan_csv_path,
+                                                 filehead=head_csv_path)
     # Co-opt ResampleCraters to remove all craters beyond subset cdim
     # keep minpix = 0 (since we don't have pixel diameters yet)
     craters = mkin.ResampleCraters(craters, sub_cdim, None, arad=R_km)
@@ -260,12 +255,10 @@ if __name__ == '__main__':
 
     # Generate target density maps/masks
     outshp = (dmlen, dmlen)
-    X, Y, X_id, Y_id = make_dmaps(files, maketype, outshp, minpix, dmap_args, 
-                                  savetiff=savetiff)
+    X, Y = make_dmaps(files, maketype, outshp, minpix, dmap_args, 
+                      savetiff=savetiff)
 
     # Optionally, save data as npy file
     if savenpy:
-        X = np.array(X, dtype=np.float32)
-        Y = np.array(Y, dtype=np.float32)
         np.save(outhead + "_{rank:01d}_input.npy".format(rank=rank), X)
         np.save(outhead + "_{rank:01d}_targets.npy".format(rank=rank), Y)
