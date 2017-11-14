@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Input Image Generator for DeepMoon Convnet Crater Detector
+"""Input Image Dataset Generator Functions
 
 Functions for generating input and target image datasets from Lunar digital
-elevation maps and crater catalogs.
+elevation maps and crater catalogues.
 """
 from __future__ import absolute_import, division, print_function
 
@@ -16,11 +16,13 @@ import glob
 import collections
 import pickle
 import re
+import cv2
+from scipy.spatial import cKDTree as kd
 
 ########## Read Cratering CSVs ##########
 
-def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
-    """Reads LROC 5 - 20 km crater catalog CSV obtained by Alan Jackson.
+def ReadLROCCraterCSV(filename="./LROCCraters.csv", sortlat=True):
+    """Reads LROC 5 - 20 km crater catalogue CSV obtained by Alan Jackson.
 
     Parameters
     ----------
@@ -28,7 +30,7 @@ def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
         Filepath and name of LROC csv file.  Default assumes it exists in the
         current working directory.
     sortlat : bool, optional
-        If `True` (default), order catalog by latitude.
+        If `True` (default), order catalogue by latitude.
 
     Returns
     -------
@@ -45,7 +47,7 @@ def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
 
 def ReadHeadCraterCSV(filename="./HeadCraters.csv", sortlat=True):
     """Reads Head et al. 2010 (`http://adsabs.harvard.edu/
-    abs/2010Sci...329.1504H`) >= 20 km diameter crater catalog.
+    abs/2010Sci...329.1504H`) >= 20 km diameter crater catalogue.
 
     Parameters
     ----------
@@ -53,7 +55,7 @@ def ReadHeadCraterCSV(filename="./HeadCraters.csv", sortlat=True):
         Filepath and name of Head et al. csv file.  Default assumes it exists
         in the current working directory.
     sortlat : bool, optional
-        If `True` (default), order catalog by latitude.
+        If `True` (default), order catalogue by latitude.
 
     Returns
     -------
@@ -69,7 +71,7 @@ def ReadHeadCraterCSV(filename="./HeadCraters.csv", sortlat=True):
     return craters
 
 
-def ReadLROCHeadCombinedCraterCSV(filelroc="./alanalldata.csv",
+def ReadLROCHeadCombinedCraterCSV(filelroc="./LROCCraters.csv",
                                   filehead="./LolaLargeCraters.csv",
                                   sortlat=True):
     """Combines LROC 5 - 20 km crater dataset with Head >= 20 km dataset.
@@ -81,7 +83,7 @@ def ReadLROCHeadCombinedCraterCSV(filelroc="./alanalldata.csv",
     filehead : str, optional
         Head et al. crater file location
     sortlat : bool, optional
-        If `True` (default), order catalog by latitude.
+        If `True` (default), order catalogue by latitude.
 
     Returns
     -------
@@ -90,7 +92,7 @@ def ReadLROCHeadCombinedCraterCSV(filelroc="./alanalldata.csv",
     """
     ctrs_head = ReadHeadCraterCSV(filename=filehead, sortlat=False)
     ctrs_head = ctrs_head[ctrs_head["Diameter (km)"] > 20]
-    ctrs_lroc = ReadAlanCraterCSV(filename=filelroc, sortlat=False)
+    ctrs_lroc = ReadLROCCraterCSV(filename=filelroc, sortlat=False)
     ctrs_lroc.drop(["tag"], axis=1, inplace=True)
     craters = pd.concat([ctrs_lroc, ctrs_head], axis=0, ignore_index=True,
                         copy=True)
@@ -116,7 +118,7 @@ def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
         leaving only the whole crater (listed as "r" or without a second
         letter). Only useful if you want to (crudely) remove secondary impacts.
     sortlat : bool, optional
-        If `True`, order catalog by latitude.
+        If `True`, order catalogue by latitude.
 
     Returns
     -------
@@ -168,7 +170,7 @@ def DropSatelliteCraters(craters):
     craters.drop(drop_index, inplace=True)
 
 
-def ReadLROCLUCombinedCraterCSV(filealan="./alanalldata.csv",
+def ReadLROCLUCombinedCraterCSV(filealan="./LROCCraters.csv",
                                 filelu="./LU78287GT.csv",
                                 dropfeatures=False):
     """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters
@@ -239,8 +241,9 @@ def ReadMercuryCraterCSV(filename="./MercLargeCraters.csv", sortlat=True):
 
     craters_names = ["Long", "Lat", "Diameter (km)"]
     craters_types = [float, float, float]
-    craters = pd.read_csv(open(filename, 'r'), sep=',', header=0,
-        names=craters_names, dtype=dict(zip(craters_names, craters_types)))
+    craters = pd.read_csv(
+        open(filename, 'r'), sep=',', header=0, names=craters_names,
+        dtype=dict(zip(craters_names, craters_types)))
 
     if sortlat:
         craters.sort_values(by='Lat', inplace=True)
@@ -951,7 +954,7 @@ def GenDataset(img, craters, outhead, ilen_range=np.array([300., 4000.]),
     The function randomly samples small images from a Plate Carree
     projection global digital elevation map, and converts the images to
     Orthographic projection.  Pixel coordinates and radii of craters in each
-    image are derived from a catalog.  Images and Pandas tables of
+    image are derived from a catalogue.  Images and Pandas tables of
     corresponding craters are then saved to disk in hdf5 format.
 
     Parameters
@@ -1124,77 +1127,55 @@ def InitialImageCut(img, cdim, newcdim):
     return img
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
 
-    from mpi4py import MPI
-    import argparse
+#     from mpi4py import MPI
+#     import argparse
 
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
+#     comm = MPI.COMM_WORLD
+#     rank = comm.Get_rank()
+#     size = comm.Get_size()
 
-    parser = argparse.ArgumentParser(description='Input data creation script.')
-    parser.add_argument('--image_path', metavar='imgpath', type=str, required=False,
-                        help='Path to the source image.', default="./LOLA_Global_20k.png")
-    parser.add_argument('--lu_csv_path', metavar='lupath', type=str, required=False,
-                        help='Path to LU78287 crater csv.', default="./LU78287GT.csv")
-    parser.add_argument('--alan_csv_path', metavar='alanpath', type=str, required=False,
-                        help='Path to LROC crater csv.', default="./alanalldata.csv")
-    parser.add_argument('--outhead', metavar='outhead', type=str, required=False,
-                        help='Filepath and filename prefix of output files.', default="out/lola")
-    parser.add_argument('--amt', type=int, default=7500, required=False,
-                        help='Number of images each thread will make (multiply by number of \
-                        threads for total number of images produced).')
-    parser.add_argument('--cdim', nargs=4, type=int, required=False,
-                        help='[Min longitude, max, min latitude, max] of source image crop. \
-                        Crop creates global bounds for image set.')
-    parser.add_argument('--minpix', type=float, default=0., required=False,
-                        help='Minimum pixel diameter allowed in crater csv')
-    parser.add_argument('--slivercut', type=float, default=0.6, required=False,
-                        help='Minimum width/height aspect ratio to be acceptable image.')
-    args = parser.parse_args()
+#     parser = argparse.ArgumentParser(description='Input data creation script.')
+#     parser.add_argument('--image_path', metavar='imgpath', type=str, required=False,
+#                         help='Path to the source image.', default="./LOLA_Global_20k.png")
+#     parser.add_argument('--lu_csv_path', metavar='lupath', type=str, required=False,
+#                         help='Path to LU78287 crater csv.', default="./LU78287GT.csv")
+#     parser.add_argument('--alan_csv_path', metavar='alanpath', type=str, required=False,
+#                         help='Path to LROC crater csv.', default="./LROCCraters.csv")
+#     parser.add_argument('--outhead', metavar='outhead', type=str, required=False,
+#                         help='Filepath and filename prefix of output files.', default="out/lola")
+#     parser.add_argument('--amt', type=int, default=7500, required=False,
+#                         help='Number of images each thread will make (multiply by number of \
+#                         threads for total number of images produced).')
+#     parser.add_argument('--cdim', nargs=4, type=int, required=False,
+#                         help='[Min longitude, max, min latitude, max] of source image crop. \
+#                         Crop creates global bounds for image set.')
+#     parser.add_argument('--minpix', type=float, default=0., required=False,
+#                         help='Minimum pixel diameter allowed in crater csv')
+#     parser.add_argument('--slivercut', type=float, default=0.6, required=False,
+#                         help='Minimum width/height aspect ratio to be acceptable image.')
+#     args = parser.parse_args()
 
-    print("Thread {0} of {1}".format(rank, size))
+#     print("Thread {0} of {1}".format(rank, size))
 
-    img = Image.open(args.image_path).convert("L")
+#     img = Image.open(args.image_path).convert("L")
         
-    cdim = [-180, 180, -90, 90]
-    if args.cdim:
-        img = InitialImageCut(img, cdim, args.cdim)
-        cdim = args.cdim
+#     cdim = [-180, 180, -90, 90]
+#     if args.cdim:
+#         img = InitialImageCut(img, cdim, args.cdim)
+#         cdim = args.cdim
 
-    craters = ReadCombinedCraterCSV(filealan=args.alan_csv_path, filelu=args.lu_csv_path,
-                                            dropfeatures=True)
-    # Co-opt ResampleCraters to remove all craters beyond subset cdim
-    # keep minpix = 0 (since we don't have pixel diameters yet)
-    craters = ResampleCraters(craters, cdim, None)
+#     craters = ReadCombinedCraterCSV(filealan=args.alan_csv_path, filelu=args.lu_csv_path,
+#                                             dropfeatures=True)
+#     # Co-opt ResampleCraters to remove all craters beyond subset cdim
+#     # keep minpix = 0 (since we don't have pixel diameters yet)
+#     craters = ResampleCraters(craters, cdim, None)
 
-    GenDataset(img, craters, args.outhead, ilen_range=np.array([600., 2000.]), arad=1737.4,
-                    olen=300, cdim=cdim, amt=args.amt, zeropad=5, minpix=args.minpix,
-                    slivercut=args.slivercut, outp="_p{0}.p".format(rank), 
-                    istart = rank*args.amt)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import numpy as np
-import pandas as pd
-from PIL import Image
-import cv2
-
-from scipy.spatial import cKDTree as kd
-
+#     GenDataset(img, craters, args.outhead, ilen_range=np.array([600., 2000.]), arad=1737.4,
+#                     olen=300, cdim=cdim, amt=args.amt, zeropad=5, minpix=args.minpix,
+#                     slivercut=args.slivercut, outp="_p{0}.p".format(rank), 
+#                     istart = rank*args.amt)
 
 def gkern(l=5, sig=1.):
     """

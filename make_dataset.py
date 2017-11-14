@@ -1,19 +1,8 @@
 #!/usr/bin/env python
-"""Input Data Generator for DeepMoon Convnet Crater Detector
+"""Input Image Dataset Generator
 
 Script for generating input datasets from Lunar global digital elevation maps 
 (DEMs) and crater catalogs.
-
-We used the USGS Astrogeology Cloud Processing service to convert the
-LRO-Kaguya merged DEM - found at https://astrogeology.usgs.gov/
-search/map/Moon/LRO/LOLA/Lunar_LRO_LrocKaguya_DEMmerge_60N60S_512ppd - to
-16-bit GeoTiff format, and reduce the resolution to 118 m/pixel.  (We also
-tried converting to 8-bit GeoTiff, but Astrocloud, rather than rescaling,
-simply maps values beyond the 8-bit range to either 0 or 255).  The GDAL
-library was then used to convert this to an 8-bit png at the same resolution:
-
-gdal_translate -of PNG -scale -21138 21138 -co worldfile=no 
-    LunarLROLrocKaguya_118mperpix_int16.tif LunarLROLrocKaguya_118mperpix.png
 
 This script is designed to use the LRO-Kaguya DEM and a combination of the
 LOLA-LROC 5 - 20 km and Head et al. 2010 >=20 km crater catalogs.  It

@@ -5,18 +5,26 @@ import pandas as pd
 import numpy as np
 import cartopy.crs as ccrs
 import cartopy.img_transform as cimg
-from PIL import Image, ImageOps
-from scipy.integrate import simps
+from PIL import Image
 from scipy import signal
 import make_density_map as mdm
 
 
-class InputTest(unittest.TestCase):
-    """Tests crater input and combining dataframes
-    """
+class CatalogueTest(unittest.TestCase):
+    """Tests crater catalogues."""
 
     def setUp(self):
-        c1 = mkin.ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", sortlat=False)
+
+        # Head et al. dataset.
+        self.lrochead = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=True)
+
+        c1 = mkin.ReadHeadCraterCSV()
+        c2 = mkin.ReadLROCCraterCSV()
+
+        # Salamuniccar et al. dataset.
+        self.lroclu = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=True)
+
+        c1 = mkin.ReadSalamuniccarCraterCSV(sortlat=False)
 
         def match_end(s):
             if re.match(r" [A-Z]", s[-2:]):
@@ -26,27 +34,27 @@ class InputTest(unittest.TestCase):
         tocut = c1.loc[c1["Name"].notnull(), "Name"].apply(match_end)
         tocut = tocut[tocut].index
         c1.drop(tocut, inplace=True)
-        c1.drop(["ID", "Radius (deg)", "D_range", "p", "Name"], axis=1, inplace=True)
+        c1.drop(["ID", "Radius (deg)", "D_range", "p", "Name"],
+                axis=1, inplace=True)
         c1 = c1[c1["Diameter (km)"] > 20]
 
-        c2 = mkin.ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=False)
+        c2 = mkin.ReadLROCCraterCSV(sortlat=False)
         c2.drop(["Unnamed: 0", "Unnamed: 0.1", "tag"], axis=1, inplace=True)
 
-        self.c = pd.concat([c1, c2], axis=0, ignore_index=True)
+        self.lroclu_t = pd.concat([c1, c2], axis=0, ignore_index=True)
 
-        self.c.sort_values(by='Lat', inplace=True)
-        self.c.reset_index(inplace=True, drop=True)
-
-        self.co = mkin.ReadCombinedCraterCSV(dropfeatures=True)
-
-        del c1; del c2
+        self.lroclu_t.sort_values(by='Lat', inplace=True)
+        self.lroclu_t.reset_index(inplace=True, drop=True)
 
     def tearDown(self):
-        self.c = None
-        self.co = None
+        self.lrochead = None
+        self.lrochead_t = None
+        self.lroclu = None
+        self.lroclu_t = None
 
     def test_dataframes_equal(self):
-        self.assertTrue(self.c.equals(self.co))
+        self.assertTrue(self.lrochead.equals(self.lrochead_t))
+        self.assertTrue(self.lroclu.equals(self.lroclu_t))
 
 
 class CoordTest(unittest.TestCase):
@@ -61,48 +69,45 @@ class CoordTest(unittest.TestCase):
                      origin[1], origin[1] + extent[1]]
         self.imgdim = np.random.randint(100, high=200, size=2)
 
-        self.cx = np.array([self.cdim[1], 
-                np.random.uniform(self.cdim[0] + 1, self.cdim[1])])
-        self.cy = np.array([self.cdim[3], 
-                np.random.uniform(self.cdim[2] + 1, self.cdim[3])])
-
+        self.cx = np.array(
+            [self.cdim[1], np.random.uniform(self.cdim[0] + 1, self.cdim[1])])
+        self.cy = np.array(
+            [self.cdim[3], np.random.uniform(self.cdim[2] + 1, self.cdim[3])])
 
     def test_coord2pix(self):
 
-        x_gt = self.imgdim[0] * \
-                    (self.cx - self.cdim[0]) / (self.cdim[1] - self.cdim[0])
-        y_gt = self.imgdim[1] * \
-                    (self.cy - self.cdim[2]) / (self.cdim[3] - self.cdim[2])
-        yi_gt = self.imgdim[1] * \
-                    (self.cdim[3] - self.cy) / (self.cdim[3] - self.cdim[2])
+        x_gt = (self.imgdim[0] *
+                (self.cx - self.cdim[0]) / (self.cdim[1] - self.cdim[0]))
+        y_gt = (self.imgdim[1] *
+                (self.cy - self.cdim[2]) / (self.cdim[3] - self.cdim[2]))
+        yi_gt = (self.imgdim[1] *
+                 (self.cdim[3] - self.cy) / (self.cdim[3] - self.cdim[2]))
 
         for origin in ["lower", "upper"]:
             with self.subTest(origin=origin):
-                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim, 
-                                    self.imgdim, origin=origin)
+                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
+                                      self.imgdim, origin=origin)
                 if origin == "upper":
                     y_gt_curr = yi_gt
                 else:
                     y_gt_curr = y_gt
                 xy = np.r_[x, y]
                 xy_gt = np.r_[x_gt, y_gt_curr]
-                self.assertTrue( np.all(np.isclose(xy, xy_gt, 
-                                rtol=1e-7, atol=1e-10)) )
-
+                self.assertTrue(np.all(np.isclose(xy, xy_gt,
+                                rtol=1e-7, atol=1e-10)))
 
     def test_pix2coord(self):
 
         for origin in ["lower", "upper"]:
             with self.subTest(origin=origin):
-                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim, 
-                                    self.imgdim, origin=origin)
-                cx, cy = mkin.pix2coord(x, y, self.cdim, self.imgdim, 
-                                    origin=origin)
+                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
+                                      self.imgdim, origin=origin)
+                cx, cy = mkin.pix2coord(x, y, self.cdim, self.imgdim,
+                                        origin=origin)
                 cxy = np.r_[cx, cy]
                 cxy_gt = np.r_[self.cx, self.cy]
-                self.assertTrue( np.all(np.isclose(cxy, cxy_gt, 
-                                rtol=1e-7, atol=1e-10)) )
-
+                self.assertTrue(np.all(np.isclose(cxy, cxy_gt,
+                                rtol=1e-7, atol=1e-10)))
 
     def test_km2pix(self):
 
@@ -344,7 +349,7 @@ def run_dmtest():
 
 def run_everything():
     suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(InputTest))
+    suite.addTest(unittest.makeSuite(CatalogueTest))
     suite.addTest(unittest.makeSuite(CoordTest))
     suite.addTest(unittest.makeSuite(WarpTest))
     suite.addTest(unittest.makeSuite(DensMapTest))
