@@ -1,52 +1,71 @@
 #!/usr/bin/env python
-"""Moon Cratering Project Input Dataset Generator
+"""Input Data Generator for DeepMoon Convnet Crater Detector
 
-Script that calls make_input_data and make_density_map to create a dataset of input moon images and target density maps, in either png image or numpy tensor format.  Because the number of tunable parameters that the user must consider, I've chosen not to use parser.  Instead, I recommend making a copy of this script.
+Script for generating input datasets from Lunar global digital elevation maps 
+(DEMs) and crater catalogs.
 
-The script uses mpi4py to speed up the processing.  Comment out the MPI code block below to remove this functionality on systems where it isn't installed.
+We used the USGS Astrogeology Cloud Processing service to convert the
+LRO-Kaguya merged DEM - found at https://astrogeology.usgs.gov/
+search/map/Moon/LRO/LOLA/Lunar_LRO_LrocKaguya_DEMmerge_60N60S_512ppd - to
+16-bit GeoTiff format, and reduce the resolution to 118 m/pixel.  (We also
+tried converting to 8-bit GeoTiff, but Astrocloud, rather than rescaling,
+simply maps values beyond the 8-bit range to either 0 or 255).  The GDAL
+library was then used to convert this to an 8-bit png at the same resolution:
+
+gdal_translate -of PNG -scale -21138 21138 -co worldfile=no 
+    LunarLROLrocKaguya_118mperpix_int16.tif LunarLROLrocKaguya_118mperpix.png
+
+This script is designed to use the LRO-Kaguya DEM and a combination of the
+LOLA-LROC 5 - 20 km and Head et al. 2010 >=20 km crater catalogs.  It
+generates a randomized set of small (projection-corrected) images and
+corresponding crater targets.  The input and target image sets are stored as
+hdf5 files.  The longitude and latitude limits of each image is included in the
+input set file, and tables of the craters in each image are stored in a
+separate Pandas HDFStore hdf5 file.
+
+The script's parameters are located under the Global Variables.  We recommend
+making a copy of this script when generating a dataset.
+
+MPI4py can be used to generate more images - each thread is given `amt` number
+of images to generate.  Comment out the MPI code block below to run on systems
+where it's not installed.
 """
 
-########################### Imports ###########################
+########## Imports ##########
 
 # Past-proofing
 from __future__ import absolute_import, division, print_function
 
-# System modules
-import os
-import sys
-import glob
-
 # I/O and math stuff
 import pandas as pd
 import numpy as np
-from PIL import Image, ImageChops, ImageOps
+from PIL import Image
 
 # Input making modules
 import make_input_data as mkin
 import make_density_map as densmap
 
-# Garbage collection
-import gc
+########## Global Variables ##########
 
-########################### Global Variables ###########################
+# Source image path.
+source_image_path = "/home/cczhu/public_html/LOLA_Global_20k.png"
+# Head et al. dataset csv path.
+head_csv_path = "./LolaLargeCraters.csv"
+# LROC crater dataset (from Alan) csv path.
+alan_csv_path = "./alanalldata.csv"
+# Output filepath and file header.  Eg. if outhead = "./input_data/train",
+# files will have extension "./out/train_inputs.hdf5", "./out/train_inputs.hdf5"
+outhead = "./input_data/train"
 
+# Number of images to make (if using MPI4py, number of image per thread to
+# make).
+amt = 60000
 
-source_image_path = "/home/cczhu/public_html/LOLA_Global_20k.png"     # Source image path
-head_csv_path = "./LolaLargeCraters.csv"            # Head dataset csv path
-alan_csv_path = "./alanalldata.csv"                 # LROC crater dataset (from Alan) csv path
-outhead = "/home/cczhu/cratering/test/train/lola"   # Output filepath and file header (if 
-                                                    # outhead = "./out/lola", files will have extension
-                                                    # "./out/lola_XXXX.png", "./out/lola_XXXX_mask.png", etc.)
-zeropad = 5                                         # Number of zeros to pad numbers in output files (number of
-                                                    # Xs in "...XXXX.png" above)
-
-amt = 60000                                         # Number of images each thread will make (multiply by number of
-                                                    # threads for total number of images produced)
-
-ilen_range = [600., 2000.]                          # Range of image widths, in pixels, to crop from source image.  For
-                                                    # the LOLA 20k image, 23040 pixels = 180 degrees of latitude, so
-                                                    # 2000 pixels = 15.6 degrees of latitude, the approximate maximum
-                                                    # latitude size of the image to prevent distortion at image edges.
+# Range of image widths, in pixels, to crop from source image.  For Orthogonal
+# projection, crater radii are changed roughly by a factor of
+# cos(dphi * pi / 360), where dphi is the angular height of the image.  Larger
+# images are distorted at their edges but 
+ilen_range = [600., 2000.]
 
 olen = 256                                          # Size of moon images
 dmlen = 256                                         # Size of density maps (should be 2^i smaller than olen, for 

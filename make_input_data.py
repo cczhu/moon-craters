@@ -1,121 +1,32 @@
 #!/usr/bin/env python
-"""Moon Crater Input Data Generator
+"""Input Image Generator for DeepMoon Convnet Crater Detector
 
-Functions for combining LRO LOLA Elevation Model heightmap (https://astrogeology.usgs.gov/search/details/Moon/LRO/LOLA/Lunar_LRO_LOLA_Global_LDEM_118m_Mar2014/cub) and crater location and size data from Goran Salamuniccar's database (https://astrogeology.usgs.gov/search/map/Moon/Research/Craters/GoranSalamuniccar_MoonCraters) and LROC data acquired for the cratering group by Alan Jackson.  
-
-The LRO source image is a "simple cylindrical", or Plate Carree (http://desktop.arcgis.com/en/arcmap/10.3/guide-books/map-projections/equidistant-cylindrical.htm), image, and so a change in latitude or longitude corresponds to the same change in pixel coordinates for all points in the map.  The map was downloaded in png form using USGS's AstroCloud computing service (http://astrocloud.wr.usgs.gov/index.php).
-
-The script randomly samples images from the LRO source image, transforms them from Plate Carree to Orthographic projection, and saves them to disk in png format along with a csv file of associated craters, including their image x, y locations.  If called as a script, user must specify input file locations (use python make_input_data.py -h for help with arguments).  The script will use mpi4py multithreading to speed work up.  If calling as a module, use the GenDataSet function to access all subroutines (except for those that read in the image and crater CSV master files).
-
-Examples:
-
-Use 4 threads to make 30,000 random images from upper half of 20k LOLA source image, removing craters with diameters below 5 pixels and outputting to outhead path and file header:
-
-    mpirun -np 4 python make_input_data.py --image_path "/home/cczhu/cratering_big_data/LOLA_Global_20k.png" --outhead "/home/cczhu/
-    cratering_big_data/output/out" --cdim -180 0 0 90 --minpix 5
-
-Use 8 threads to make 10,000 random images from polar region of 20k LOLA source image, removing craters with diameters below 5 pixels and discarding those with small aspect ratios:
-
-    mpirun -np 8 python make_input_data.py --image_path "/home/cczhu/cratering_big_data/LOLA_Global_20k.png" --outhead "/home/cczhu/
-    cratering_big_data/output/out" --cdim -180 0 70 90 --minpix 5 --slivercut 0.8
-
+Functions for generating input and target image datasets from Lunar digital
+elevation maps and crater catalogs.
 """
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageOps
+from PIL import Image
 import cartopy.crs as ccrs
 import cartopy.img_transform as cimg
-import matplotlib.pyplot as plt
-import matplotlib.axes as mplax
 import image_slicer as imsl
 import glob
 import collections
 import pickle
 import re
 
-
-########## Read Cratering CSVs ###########################
-
-def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
-                                sortlat=True):
-    """Reads LU78287GT (Salamuniccar et al. 2014) crater file CSV, converted
-    from the xlsx file found at `https://astrogeology.usgs.gov/search/map/
-    Moon/Research/Craters/GoranSalamuniccar_MoonCraters`.  That file also
-    contains LU60645GT, which this function is also compatible with.
-
-    Parameters
-    ----------
-    filename : str
-        csv file of craters
-    dropfeatures : bool, optional
-        If true, drop satellite craters (those listed with
-        "A", "B", "C"...), leaving only the whole crater 
-        (listed as "r").  Only useful if you want to (crudely)
-        remove secondary impacts.
-    sortlat : bool, optional
-        If `True`, order catalog by latitude.
-
-    Returns
-    -------
-    craters : pandas.DataFrame
-        Craters data frame.
-    """
-    # Read in crater names
-    craters_names = ["ID", "Long", "Lat", "Radius (deg)",
-                     "Diameter (km)", "D_range", "p", "Name"]
-    craters_types = [str, float, float, float, float, float, int, str]
-    craters = pd.read_csv(
-        open(filename, 'r'), sep=',', usecols=list(range(8)), header=0,
-        engine="c", encoding="ISO-8859-1", names=craters_names,
-        dtype=dict(zip(craters_names, craters_types)))
-
-    # Truncate cyrillic characters
-    craters["Name"] = craters["Name"].str.split(":").str.get(0)
-
-    if dropfeatures:
-        DropSatelliteCraters(craters)
-
-    if sortlat:
-        craters.sort_values(by='Lat', inplace=True)
-        craters.reset_index(inplace=True, drop=True)
-
-    return craters
-
-
-def DropSatelliteCraters(craters):
-    """Drops named crater sub-features (listed with
-    "A", "B", "C"...), leaving only the whole crater 
-    (listed as "r").
-
-    Parameters
-    ----------
-    craters : pandas.DataFrame
-        Craters data frame.
-    """
-
-    # String matching thingy
-    def match_end(s):
-        if re.match(r" [A-Z]", s[-2:]):
-            return True
-        return False
-
-    # Find all crater names that ends with A - Z
-    basenames = (
-        craters.loc[craters["Name"].notnull(), "Name"].apply(match_end))
-    drop_index = basenames[basenames].index
-    craters.drop(drop_index, inplace=True)
-
+########## Read Cratering CSVs ##########
 
 def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
-    """Reads LROC 5 - 20 km crater catalog CSV (obtained by
-    Alan Jackson).
+    """Reads LROC 5 - 20 km crater catalog CSV obtained by Alan Jackson.
 
     Parameters
     ----------
-    filename : str
-        csv file of craters
+    filename : str, optional
+        Filepath and name of LROC csv file.  Default assumes it exists in the
+        current working directory.
     sortlat : bool, optional
         If `True` (default), order catalog by latitude.
 
@@ -132,16 +43,15 @@ def ReadAlanCraterCSV(filename="./alanalldata.csv", sortlat=True):
     return craters
 
 
-def ReadHeadCraterCSV(filename="./LolaLargeCraters.csv",
-                      sortlat=True):
+def ReadHeadCraterCSV(filename="./HeadCraters.csv", sortlat=True):
     """Reads Head et al. 2010 (`http://adsabs.harvard.edu/
-    abs/2010Sci...329.1504H`) >= 20 km diameter crater catalog
-    CSV.
+    abs/2010Sci...329.1504H`) >= 20 km diameter crater catalog.
 
     Parameters
     ----------
     filename : str, optional
-        csv file of craters
+        Filepath and name of Head et al. csv file.  Default assumes it exists
+        in the current working directory.
     sortlat : bool, optional
         If `True` (default), order catalog by latitude.
 
@@ -150,63 +60,11 @@ def ReadHeadCraterCSV(filename="./LolaLargeCraters.csv",
     craters : pandas.DataFrame
         Craters data frame.
     """
-    craters = pd.read_csv(filename, header=0, 
+    craters = pd.read_csv(filename, header=0,
                           names=['Long', 'Lat', 'Diameter (km)'])
     if sortlat:
         craters.sort_values(by='Lat', inplace=True)
         craters.reset_index(inplace=True, drop=True)
-
-    return craters
-
-
-def ReadLROCLUCombinedCraterCSV(filealan="./alanalldata.csv",
-                                filelu="./LU78287GT.csv", 
-                                dropfeatures=False):
-    """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters
-    that are > 20 km.
-
-    Parameters
-    ----------
-    filealan : str
-        LROC crater file location
-    filelu : str
-        Salamuniccar crater file location
-    dropfeatures : bool
-        If true, drop satellite craters (those listed with
-        "A", "B", "C"...), leaving only the whole crater 
-        (listed as "r").  Only useful if you want to (crudely)
-        remove secondary impacts.
-
-    Returns
-    -------
-    craters : pandas.DataFrame
-        Craters data frame.
-    """
-
-    # Read in LU crater names
-    craters_names = ["Long", "Lat", "Radius (deg)", 
-                        "Diameter (km)", "D_range", "p", "Name"]
-    craters_types = [float, float, float, float, float, int, str]
-    craters = pd.read_csv(open(filelu, 'r'), sep=',', 
-        usecols=list(range(1, 8)), header=0, engine="c", encoding = "ISO-8859-1",
-        names=craters_names, dtype=dict(zip(craters_names, craters_types)))
-
-    # Truncate cyrillic characters
-    craters["Name"] = craters["Name"].str.split(":").str.get(0)
-
-    if dropfeatures:
-        DropSatelliteCraters(craters)
-
-    craters.drop(["Radius (deg)", "D_range", "p", "Name"], axis=1, inplace=True)
-    craters = craters[craters["Diameter (km)"] > 20]
-
-    craters_alan = pd.read_csv(filealan, header=0, usecols=list(range(2, 5)))
-
-    craters = pd.concat([craters, craters_alan], axis=0, ignore_index=True,
-                            copy=True)
-
-    craters.sort_values(by='Lat', inplace=True)
-    craters.reset_index(inplace=True, drop=True)
 
     return craters
 
@@ -242,6 +100,128 @@ def ReadLROCHeadCombinedCraterCSV(filelroc="./alanalldata.csv",
     return craters
 
 
+def ReadSalamuniccarCraterCSV(filename="./LU78287GT.csv", dropfeatures=False,
+                              sortlat=True):
+    """Reads LU78287GT (Salamuniccar et al. 2014) crater file CSV, converted
+    from the xlsx file found at `https://astrogeology.usgs.gov/search/map/
+    Moon/Research/Craters/GoranSalamuniccar_MoonCraters`.  That file also
+    contains LU60645GT, which is also compatible with this function.
+
+    Parameters
+    ----------
+    filename : str
+        csv file of craters
+    dropfeatures : bool, optional
+        If true, drop satellite craters (those listed with "A", "B", "C"...),
+        leaving only the whole crater (listed as "r" or without a second
+        letter). Only useful if you want to (crudely) remove secondary impacts.
+    sortlat : bool, optional
+        If `True`, order catalog by latitude.
+
+    Returns
+    -------
+    craters : pandas.DataFrame
+        Craters data frame.
+    """
+    # Read in crater names
+    craters_names = ["ID", "Long", "Lat", "Radius (deg)",
+                     "Diameter (km)", "D_range", "p", "Name"]
+    craters_types = [str, float, float, float, float, float, int, str]
+    craters = pd.read_csv(
+        open(filename, 'r'), sep=',', usecols=list(range(8)), header=0,
+        engine="c", encoding="ISO-8859-1", names=craters_names,
+        dtype=dict(zip(craters_names, craters_types)))
+
+    # Truncate cyrillic characters
+    craters["Name"] = craters["Name"].str.split(":").str.get(0)
+
+    if dropfeatures:
+        DropSatelliteCraters(craters)
+
+    if sortlat:
+        craters.sort_values(by='Lat', inplace=True)
+        craters.reset_index(inplace=True, drop=True)
+
+    return craters
+
+
+def DropSatelliteCraters(craters):
+    """Drops named crater sub-features (listed with "A", "B", "C"...), leaving
+    only the whole crater (listed as "r" or with no second letter).
+
+    Parameters
+    ----------
+    craters : pandas.DataFrame
+        Craters data frame to be cleaned of features.
+    """
+
+    # String matching thingy
+    def match_end(s):
+        if re.match(r" [A-Z]", s[-2:]):
+            return True
+        return False
+
+    # Find all crater names that ends with A - Z
+    basenames = (
+        craters.loc[craters["Name"].notnull(), "Name"].apply(match_end))
+    drop_index = basenames[basenames].index
+    craters.drop(drop_index, inplace=True)
+
+
+def ReadLROCLUCombinedCraterCSV(filealan="./alanalldata.csv",
+                                filelu="./LU78287GT.csv",
+                                dropfeatures=False):
+    """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters
+    that are > 20 km.
+
+    Parameters
+    ----------
+    filealan : str
+        LROC crater file location
+    filelu : str
+        Salamuniccar crater file location
+    dropfeatures : bool
+        If true, drop satellite craters (those listed with
+        "A", "B", "C"...), leaving only the whole crater
+        (listed as "r").  Only useful if you want to (crudely)
+        remove secondary impacts.
+
+    Returns
+    -------
+    craters : pandas.DataFrame
+        Craters data frame.
+    """
+
+    # Read in LU crater names
+    craters_names = ["Long", "Lat", "Radius (deg)",
+                     "Diameter (km)", "D_range", "p", "Name"]
+    craters_types = [float, float, float, float, float, int, str]
+    craters = pd.read_csv(
+        open(filelu, 'r'), sep=',', usecols=list(range(1, 8)), header=0,
+        engine="c", encoding="ISO-8859-1", names=craters_names,
+        dtype=dict(zip(craters_names, craters_types)))
+
+    # Truncate cyrillic characters
+    craters["Name"] = craters["Name"].str.split(":").str.get(0)
+
+    if dropfeatures:
+        DropSatelliteCraters(craters)
+
+    craters.drop(["Radius (deg)", "D_range", "p", "Name"],
+                 axis=1, inplace=True)
+    craters = craters[craters["Diameter (km)"] > 20]
+
+    craters_alan = pd.read_csv(filealan, header=0, usecols=list(range(2, 5)))
+
+    craters = pd.concat([craters, craters_alan], axis=0, ignore_index=True,
+                        copy=True)
+
+    craters.sort_values(by='Lat', inplace=True)
+    craters.reset_index(inplace=True, drop=True)
+
+    return craters
+
+
 def ReadMercuryCraterCSV(filename="./MercLargeCraters.csv", sortlat=True):
     """Reads crater file CSV from Fassett et al.
     (http://www.planetary.brown.edu/html_pages/mercury_craters.htm)
@@ -268,9 +248,7 @@ def ReadMercuryCraterCSV(filename="./MercLargeCraters.csv", sortlat=True):
 
     return craters
 
-
-############# Coordinates to pixels projections ###############
-
+########## Coordinates to pixels projections ##########
 
 def coord2pix(cx, cy, cdim, imgdim, origin="upper"):
     """Converts coordinate x/y to image pixel locations.
@@ -344,9 +322,7 @@ def pix2coord(x, y, cdim, imgdim, origin="upper"):
 
     return cx, cy
 
-
-############# Metres to Pixels ###############
-
+########## Metres to Pixels ##########
 
 def km2pix(imgheight, latextent, dc=1., a=1737.4):
     """Returns conversion from km to pixels.
@@ -369,11 +345,7 @@ def km2pix(imgheight, latextent, dc=1., a=1737.4):
     """
     return (180./np.pi)*imgheight*dc/latextent/a
 
-
-##############################################
-
-
-############# Warp Images and CSVs ###############
+########## Warp Images and CSVs ##########
 
 def regrid_shape_aspect(regrid_shape, target_extent):
     """
@@ -976,6 +948,12 @@ def GenDataset(img, craters, outhead, ilen_range=np.array([300., 4000.]),
                 outp=False, istart = 0, seed=None):
     """Generates random dataset from plate image.
 
+    The function randomly samples small images from a Plate Carree
+    projection global digital elevation map, and converts the images to
+    Orthographic projection.  Pixel coordinates and radii of craters in each
+    image are derived from a catalog.  Images and Pandas tables of
+    corresponding craters are then saved to disk in hdf5 format.
+
     Parameters
     ----------
     img : PIL.Image.Image
@@ -1025,7 +1003,7 @@ def GenDataset(img, craters, outhead, ilen_range=np.array([300., 4000.]),
         Output file starting number.  Useful for preventing overwriting
         of files when batch serializing the code (see __main__ script)
     seed : int or None
-        np.random.seed input (for testing purposes).    
+        np.random.seed input (for testing purposes).
     """
 
     # just in case we make this user-selectable later...
@@ -1198,3 +1176,255 @@ if __name__ == '__main__':
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+import numpy as np
+import pandas as pd
+from PIL import Image
+import cv2
+
+from scipy.spatial import cKDTree as kd
+
+
+def gkern(l=5, sig=1.):
+    """
+    Creates Gaussian kernel with side length l and a sigma of sig
+    """
+
+    ax = np.arange(-l // 2 + 1., l // 2 + 1.)
+    xx, yy = np.meshgrid(ax, ax)
+
+    kernel = np.exp(-(xx**2 + yy**2) / (2. * sig**2))
+
+    return kernel / np.sum(kernel)
+
+
+# https://stackoverflow.com/questions/10031580/how-to-write-simple-geometric-shapes-into-numpy-arrays
+def circlemaker(r=10.):
+    """
+    Creates circle mask of radius r.
+    """
+
+    # mask grid extent (+1 to ensure we capture radius)
+    rhext = int(r) + 1
+
+    xx, yy = np.mgrid[-rhext:rhext + 1, -rhext:rhext + 1]
+    circle = (xx**2 + yy**2) <= r**2
+
+    return circle.astype(float)
+
+# http://docs.opencv.org/2.4/modules/core/doc/drawing_functions.html#circle
+# Though that autodoc is terrible, and should be supplemented with
+# http://docs.opencv.org/3.1.0/dc/da5/tutorial_py_drawing_functions.html
+# and (file that defines static void Circle(...))
+# https://github.com/opencv/opencv/blob/05b15943d6a42c99e5f921b7dbaa8323f3c042c6/modules/imgproc/src/drawing.cpp
+def ringmaker(r=10., dr=1):
+    """
+    Creates ring of radius r and thickness dr.
+
+    Parameters
+    ----------
+    r : float
+        Ring radius
+    dr : int
+        Ring thickness (cv2.circle requires int)
+    """
+
+    # mask grid extent (dr/2 +1 to ensure we capture ring width
+    # and radius); same philosophy as above
+    rhext = int(np.ceil(r + dr/2.)) + 1
+
+    # cv2.circle requires integer radius
+    mask = np.zeros([2*rhext + 1, 2*rhext + 1], np.uint8)
+
+    # Generate ring
+    ring = cv2.circle(mask, (rhext,rhext), int(np.round(r)), 1, thickness=dr)
+
+    return ring.astype(float)
+
+
+def get_merge_indices(cen, imglen, ks_h, ker_shp):
+    """Helper function that returns indices for merging 
+    gaussian with base image, including edge case
+    handling.  x and y are identical, so code
+    is axis-neutral.
+
+    Assumes INTEGER values for all inputs!
+    """
+
+    left = cen - ks_h; right = cen + ks_h + 1
+
+    # Handle edge cases.
+    # If left side of gaussian is beyond the left
+    # end of the image.
+    if left < 0:
+        # Crop gaussian and shift image index
+        # to lefthand side.
+        img_l = 0; g_l = -left
+    else:
+        img_l = left; g_l = 0
+    if right > imglen:
+        img_r = imglen; g_r = ker_shp - (right - imglen)
+    else:
+        img_r = right; g_r = ker_shp
+
+    return [img_l, img_r, g_l, g_r]
+
+
+def make_density_map(craters, img, kernel=None, k_support = 8, k_sig=4., knn=10, 
+                        beta=0.3, kdict={}, truncate=True):
+    """Makes Gaussian kernel density maps.
+
+    Parameters
+    ----------
+    craters : pandas.DataFrame
+        craters dataframe that includes pixel x and y columns
+    img : numpy.ndarray
+        original image; assumes colour channel is last axis (tf standard)
+    kernel : function, "knn" or None
+        If a function is inputted, function must return an array of 
+        length craters.shape[0].  If "knn",  uses variable kernel with 
+            sigma = beta*<d_knn>,
+        where <d_knn> is the mean Euclidean distance of the k = knn nearest 
+        neighbouring craters.  If anything else is inputted, will use
+        constant kernel size with sigma = k_sigma.
+    k_support : int
+        Kernel support (i.e. size of kernel stencil) coefficient.  Support
+        is determined by kernel_support = k_support*sigma.  Defaults to 8.
+    k_sig : float
+        Sigma for constant sigma kernel.  Defaults to 1.
+    knn : int
+        k nearest neighbours, used for "knn" kernel.  Defaults to 10.
+    beta : float
+        Beta value used to calculate sigma for "knn" kernel.  Default 
+        is 0.3.
+    kdict : dict
+        If kernel is custom function, dictionary of arguments passed to kernel.
+    truncate : bool
+        If True, truncate mask where image truncates
+    """
+
+    # Load blank density map
+    imgshape = img.shape[:2]
+    dmap = np.zeros(imgshape)
+
+    # Get number of craters
+    N_ctrs = craters.shape[0]
+
+    # Obtain gaussian kernel sigma values
+    # callable checks if kernel is function
+    if callable(kernel):
+        sigma = kernel(**kdict)
+    # If knn is used
+    elif kernel == "knn":
+        # If we have more than 1 crater, select either nearest 11 or N_ctrs
+        # neighbours, whichever is closer
+        if N_ctrs > 1:
+            kdt = kd(craters[["x","y"]].as_matrix(), leafsize=10)
+            dnn = kdt.query(craters[["x","y"]].as_matrix(), \
+                                    k=min(N_ctrs, knn + 1))[0][:, 1:].mean(axis=1)
+        # Otherwise, assume there are craters "offscreen" half an image away
+        else:
+            dnn = 0.5*imgshape[0]*np.ones(1)
+        sigma = beta*dnn
+    else:
+        sigma = k_sig*np.ones(N_ctrs)
+
+    # Gaussian adding loop
+    for i in range(N_ctrs):
+        cx = int(craters["x"][i]); cy = int(craters["y"][i])
+
+        # A bit convoluted, but ensures that kernel_support
+        # is always odd so that centre of gaussian falls on
+        # a pixel.
+        ks_half = int( k_support*sigma[i] / 2)
+        kernel_support = ks_half * 2 + 1
+        kernel = gkern(kernel_support, sigma[i])
+
+        # Calculate indices on image where kernel should be added
+        [imxl, imxr, gxl, gxr] = get_merge_indices(cx, imgshape[1], 
+                                                    ks_half, kernel_support)
+        [imyl, imyr, gyl, gyr] = get_merge_indices(cy, imgshape[0], 
+                                                    ks_half, kernel_support)
+
+        # Add kernel to image
+        dmap[imyl:imyr, imxl:imxr] += kernel[gyl:gyr, gxl:gxr]
+
+    # Removes
+    if truncate:
+        if img.ndim == 3:
+            dmap[img[:,:,0] == 0] = 0
+        else:
+            dmap[img == 0] = 0
+
+    return dmap
+
+
+def make_mask(craters, img, binary=True, rings=False, 
+                                ringwidth=1, truncate=True):
+    """Makes crater mask binary image (does not yet consider crater overlap).
+
+    Parameters
+    ----------
+    craters : pandas.DataFrame
+        craters dataframe that includes pixel x and y columns
+    img : numpy.ndarray
+        original image; assumes colour channel is last axis (tf standard)
+    binary : bool
+        If True, returns a binary image of crater masks
+    rings : bool
+        If True, mask uses hollow rings rather than filled circles
+    ringwiddth : int
+        If rings is True, ringwidth sets the width (dr) of the ring.
+        
+    truncate : bool
+        If True, truncate mask where image truncates
+    """
+
+    # Load blank density map
+    imgshape = img.shape[:2]
+    dmap = np.zeros(imgshape)
+    cx, cy = craters["x"].values.astype('int'), craters["y"].values.astype('int')
+    radius = craters["Diameter (pix)"].values / 2.
+
+    for i in range(craters.shape[0]):
+        if rings:
+            kernel = ringmaker(r=radius[i], dr=ringwidth)
+        else:
+            kernel = circlemaker(r=radius[i])
+        # "Dummy values" so we can use get_merge_indices
+        kernel_support = kernel.shape[0]
+        ks_half = kernel_support // 2
+
+        # Calculate indices on image where kernel should be added
+        [imxl, imxr, gxl, gxr] = get_merge_indices(cx[i], imgshape[1],
+                                                    ks_half, kernel_support)
+        [imyl, imyr, gyl, gyr] = get_merge_indices(cy[i], imgshape[0],
+                                                    ks_half, kernel_support)
+
+        # Add kernel to image
+        dmap[imyl:imyr, imxl:imxr] += kernel[gyl:gyr, gxl:gxr]
+    
+    if binary:
+        dmap = (dmap > 0).astype(float)
+    
+    if truncate:
+        if img.ndim == 3:
+            dmap[img[:,:,0] == 0] = 0
+        else:
+            dmap[img == 0] = 0
+    
+    #add centroids to image
+    #dmap[cy,cx] = 2
+
+    return dmap
