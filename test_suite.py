@@ -7,7 +7,6 @@ import cartopy.crs as ccrs
 import cartopy.img_transform as cimg
 from PIL import Image
 from scipy import signal
-import make_density_map as mdm
 
 
 class CatalogueTest(unittest.TestCase):
@@ -18,30 +17,39 @@ class CatalogueTest(unittest.TestCase):
         # Head et al. dataset.
         self.lrochead = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=True)
 
-        c1 = mkin.ReadHeadCraterCSV()
-        c2 = mkin.ReadLROCCraterCSV()
+        # Craters with identical latitudes are s
+        head = pd.read_csv('./HeadCraters.csv', header=0,
+                           names=['Long', 'Lat', 'Diameter (km)'])
+        lroc = pd.read_csv('./LROCCraters.csv', usecols=range(2, 5), header=0)
+
+        self.lrochead_t = pd.concat([lroc, head], axis=0, ignore_index=True,
+                                    copy=True)
+        self.lrochead_t.sort_values(by='Lat', inplace=True)
+        self.lrochead_t.reset_index(inplace=True, drop=True)
 
         # Salamuniccar et al. dataset.
         self.lroclu = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=True)
 
-        c1 = mkin.ReadSalamuniccarCraterCSV(sortlat=False)
+        sala_names = ("Long", "Lat", "Diameter (km)", "Name")
+        sala_types = (float, float, float, str)
+        sala = pd.read_csv('./LU78287GT.csv', usecols=(1, 2, 4, 7), header=0,
+                           engine="c", encoding="ISO-8859-1", names=sala_names,
+                           dtype=dict(zip(sala_names, sala_types)))
+        sala["Name"] = sala["Name"].str.split(":").str.get(0)
 
         def match_end(s):
             if re.match(r" [A-Z]", s[-2:]):
                 return True
             return False
 
-        tocut = c1.loc[c1["Name"].notnull(), "Name"].apply(match_end)
+        tocut = sala.loc[sala["Name"].notnull(), "Name"].apply(match_end)
         tocut = tocut[tocut].index
-        c1.drop(tocut, inplace=True)
-        c1.drop(["ID", "Radius (deg)", "D_range", "p", "Name"],
-                axis=1, inplace=True)
-        c1 = c1[c1["Diameter (km)"] > 20]
+        sala.drop(tocut, inplace=True)
+        sala.drop(["Name"], axis=1, inplace=True)
+        sala = sala[sala["Diameter (km)"] > 20]
 
-        c2 = mkin.ReadLROCCraterCSV(sortlat=False)
-        c2.drop(["Unnamed: 0", "Unnamed: 0.1", "tag"], axis=1, inplace=True)
-
-        self.lroclu_t = pd.concat([c1, c2], axis=0, ignore_index=True)
+        self.lroclu_t = pd.concat([sala, lroc], axis=0, ignore_index=True,
+                                  copy=True)
 
         self.lroclu_t.sort_values(by='Lat', inplace=True)
         self.lroclu_t.reset_index(inplace=True, drop=True)
@@ -311,7 +319,7 @@ class DensMapTest(unittest.TestCase):
         kernel = self.gkern(kernel_support, kernel_sig)
 
         img_dm_c2 = signal.convolve2d(dmap_delta, kernel, boundary='fill', mode='same')
-        img_dm = mdm.make_density_map(self.craters, self.img.shape, k_sig=kernel_sig, k_support=kernel_extent)
+        img_dm = mkin.make_density_map(self.craters, self.img.shape, k_sig=kernel_sig, k_support=kernel_extent)
 
         self.assertTrue( np.isclose(img_dm_c2, img_dm, rtol=1e-05, atol=1e-08).sum() / img_dm.size )
 
@@ -322,13 +330,13 @@ class DensMapTest(unittest.TestCase):
         kernel = self.gkern(kernel_support, kernel_sig)
 
         img2_dm_c2 = signal.convolve2d(self.img2, kernel, boundary='fill', mode='same')
-        img2_dm = mdm.make_density_map(self.craters2, self.img2.shape, k_sig=kernel_sig, k_support=kernel_extent)
+        img2_dm = mkin.make_density_map(self.craters2, self.img2.shape, k_sig=kernel_sig, k_support=kernel_extent)
 
         self.assertTrue( np.isclose(img2_dm_c2, img2_dm, rtol=1e-05, atol=1e-06).sum()/ img2_dm.size )
 
 
-def run_inputtest():
-    suite = unittest.TestLoader().loadTestsFromTestCase(InputTest)
+def run_cataloguetest():
+    suite = unittest.TestLoader().loadTestsFromTestCase(CatalogueTest)
     unittest.TextTestRunner(verbosity=2).run(suite)
 
 

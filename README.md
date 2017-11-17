@@ -28,5 +28,17 @@ gdal_translate -of PNG -scale -21138 21138 -co worldfile=no
     LunarLROLrocKaguya_118mperpix_int16.tif LunarLROLrocKaguya_118mperpix.png
 ```
 
-The crater catalogs were obtained by XXXXXXXXX, and included as .csv files in
-the repository.
+The LROC crater catalog was downloaded as shapefiles from the
+[LROC site](http://wms.lroc.asu.edu/lroc/rdr_product_select?filter%5Btext%5D=
+&filter%5Blat%5D=&filter%5Blon%5D=&filter%5Brad%5D=&filter%5Bwest%5D=
+&filter%5Beast%5D=&filter%5Bsouth%5D=&filter%5Bnorth%5D=&filter%5Btopographic
+%5D=either&filter%5Bprefix%5D%5B%5D=SHAPEFILE&show_thumbs=0&per_page=
+100&commit=Search) and converted to .csv.  The Head et al. catalog was
+retrieved from [its Science paper repository](http://science.sciencemag.org/
+content/329/5998/1504/tab-figures-data).  The LU78287GT and LU60645GT
+catalogus were downloaded from their [USGS Astropedia repository](
+    https://astrogeology.usgs.gov/search/map/Moon/Research/Craters/
+GoranSalamuniccar_MoonCraters) and converted from .xlsx to .csv.  The Mercury
+crater catalogue (currently unused) is from Fassett et al. 2011, and
+downloadable from the [Brown Planetary Geosciences Group website](
+http://www.planetary.brown.edu/html_pages/mercury_craters.htm).
