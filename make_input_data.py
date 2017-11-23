@@ -472,11 +472,11 @@ def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
     if imgw_loh > (img.shape[1] / img.shape[0]):
         imgw = imgw.resize([img.shape[0],
                             int(np.round(img.shape[0] / imgw_loh))],
-                           resample=Image.BILINEAR)
+                           resample=Image.NEAREST)
     # If imgw is stretched vertically.
     else:
         imgw = imgw.resize([int(np.round(imgw_loh * img.shape[0])),
-                            img.shape[0]], resample=Image.BILINEAR)
+                            img.shape[0]], resample=Image.NEAREST)
 
     # Make background image and paste two together.
     imgo = Image.new('L', (img.shape[1], img.shape[0]), (bgval))
@@ -1009,10 +1009,11 @@ def InitialImageCut(img, cdim, newcdim):
     return img
 
 
-def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
+def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                rawlen_dist='log', ilen=256, cdim=[-180, 180, -60, 60],
-               arad=1737.4, minpix=0, tlen=256, binary=True, rings=True,
-               ringwidth=1, truncate=True, amt=100, istart=0, seed=None):
+               arad=1737.4, minpix=0, tglen=256, binary=True, rings=True,
+               ringwidth=1, truncate=True, amt=100, istart=0, seed=None,
+               verbose=False):
     """Generates random dataset from a global DEM and crater catalogue.
 
     The function randomly samples small images from a global digital elevation
@@ -1049,7 +1050,7 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
         Minimum crater diameter in pixels to be included in crater list.
         Useful when the smallest craters in the catalogue are smaller than 1
         pixel in diameter.
-    tlen : int, optional
+    tglen : int, optional
         Target image width, in pixels.
     binary : bool, optional
         If True, returns a binary image of crater masks.
@@ -1066,6 +1067,8 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
         files.
     seed : int or None
         np.random.seed input (for testing purposes).
+    verbose : bool
+        If True, prints out number of image being generated.
     """
 
     # just in case we ever make this user-selectable...
@@ -1093,28 +1096,30 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
             return np.random.randint(rawlen_range[0], rawlen_range[1] + 1)
 
     # Initialize output hdf5s.
-    imgs_h5 = h5py.File(outhead + '_inputs.hdf5', 'w')
-    imgs_h5.name = "Input crater dataset {0}_inputs".format(
-        outhead.split("/")[-1])
-    imgs_h5_dset = imgs_h5.create_dataset("input_images", (amt, ilen, ilen),
-                                          dtype='uint8')
-    imgs_h5_llbd = imgs_h5.create_group("longlatbounds")
-    imgs_h5_llbd.attrs['definition'] = ("(long min, long max, lat min, "
-                                        "lat max) of cropped image.")
-    imgs_h5_box = imgs_h5.create_group("cropbox")
-    imgs_h5_box.attrs['definition'] = ("Pixel bounds of Global DEM region"
-                                       " cropped for image.")
-    craters_h5 = pd.HDFStore(outhead + '_craters.hdf5', 'w')
-    tgts_h5 = h5py.File(outhead + '_targets.hdf5', 'w')
-    tgts_h5.name = "Target crater dataset {0}_targets.".format(
-        outhead.split("/")[-1])
-    tgts_h5_dset = tgts_h5.create_dataset("input_images", (amt, tlen, tlen),
+    imgs_h5 = h5py.File(outhead + '_images.hdf5', 'w')
+    imgs_h5_inputs = imgs_h5.create_dataset("input_images", (amt, ilen, ilen),
+                                            dtype='uint8')
+    imgs_h5_inputs.attrs['definition'] = "Input image dataset."
+    imgs_h5_tgts = imgs_h5.create_dataset("target_masks", (amt, tglen, tglen),
                                           dtype='float32')
+    imgs_h5_tgts.attrs['definition'] = "Target mask dataset."
+    imgs_h5_llbd = imgs_h5.create_group("longlat_bounds")
+    imgs_h5_llbd.attrs['definition'] = ("(long min, long max, lat min, "
+                                        "lat max) of the cropped image.")
+    imgs_h5_box = imgs_h5.create_group("pix_bounds")
+    imgs_h5_box.attrs['definition'] = ("Pixel bounds of the Global DEM region"
+                                       " that was cropped for the image.")
+    craters_h5 = pd.HDFStore(outhead + '_craters.hdf5', 'w')
 
     # Zero-padding for hdf5 keys.
-    zeropad = int(np.log10(amt))
+    zeropad = int(np.log10(amt)) + 1
 
     for i in range(amt):
+
+        # Current image number.
+        img_number = "img_{i:0{zp}d}".format(i=istart + i, zp=zeropad)
+        if verbose:
+            print("Generating {0}".format(img_number))
 
         # Determine image size to crop.
         rawlen = random_sampler()
@@ -1134,11 +1139,8 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
         llong, llat = pix2coord(ix, iy, cdim, list(img.size), origin=origin)
         llbd = np.r_[llong, llat[::-1]]
 
-        # Downsample image.  Bilinear interpolation is compromise
-        # between Image.NEAREST, which creates artifacts, and Image.LANZCOS,
-        # which is more expensive (though try that one if BILINEAR gives
-        # crap)
-        im = im.resize([ilen, ilen], resample=Image.BILINEAR)
+        # Downsample image.
+        im = im.resize([ilen, ilen], resample=Image.NEAREST)
 
         # Remove all craters that are too small to be seen in image.
         ctr_sub = ResampleCraters(craters, llbd, im.size[1], arad=arad,
@@ -1163,14 +1165,19 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
                                     "an error in projecting the cropped "
                                     "image.")
 
-        # Make target mask.
-        tgt = np.asanyarray(imgo.resize((tlen, tlen), resample=Image.BILINEAR))
+        # Make target mask.  Used Image.BILINEAR resampling because
+        # Image.NEAREST creates artifacts.  Image.LANZCOS could also be used,
+        # but is more expensive (though try that one if BILINEAR gives
+        # crap).
+        tgt = np.asanyarray(imgo.resize((tglen, tglen),
+                                        resample=Image.BILINEAR))
         mask = make_mask(ctr_xy, tgt, binary=binary, rings=rings,
                          ringwidth=ringwidth, truncate=truncate)
 
         # Output everything to file.
-        imgs_h5_dset[i, ...] = imgo_arr
-        img_number = "img_{i:0{zp}d}".format(i=istart + i, zp=zeropad)
+        imgs_h5_inputs[i, ...] = imgo_arr
+        imgs_h5_tgts[i, ...] = mask
+
         sds_box = imgs_h5_box.create_dataset(img_number, (4,), dtype='int32')
         sds_box[...] = box
         sds_llbd = imgs_h5_llbd.create_dataset(img_number, (4,), dtype='float')
@@ -1178,13 +1185,9 @@ def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
 
         craters_h5[img_number] = ctr_xy
 
-        tgts_h5_dset[i, ...] = mask
-
         imgs_h5.flush()
         craters_h5.flush()
-        tgts_h5.flush()
         i += 1
 
     imgs_h5.close()
     craters_h5.close()
-    tgts_h5.close()

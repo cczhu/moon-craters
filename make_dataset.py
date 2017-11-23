@@ -25,14 +25,8 @@ where it's not installed.
 # Past-proofing
 from __future__ import absolute_import, division, print_function
 
-# I/O and math stuff
-import pandas as pd
-import numpy as np
 from PIL import Image
-
-# Input making modules
 import make_input_data as mkin
-import make_density_map as densmap
 
 ########## Global Variables ##########
 
@@ -42,11 +36,11 @@ use_mpi4py = False
 # Source image path.
 source_image_path = "/home/cczhu/public_html/LunarLROLrocKaguya_118mperpix.png"
 
-# Head et al. catalog csv path.
-head_csv_path = "./LolaLargeCraters.csv"
-
 # LROC crater catalog csv path.
 lroc_csv_path = "./LROCCraters.csv"
+
+# Head et al. catalog csv path.
+head_csv_path = "./HeadCraters.csv"
 
 # Output filepath and file header.  Eg. if outhead = "./input_data/train",
 # files will have extension "./out/train_inputs.hdf5" and
@@ -55,25 +49,30 @@ outhead = "./input_data/train"
 
 # Number of images to make (if using MPI4py, number of image per thread to
 # make).
-amt = 60000
+amt = 30000
 
-# Range of image widths, in pixels, to crop from source image.  For Orthogonal
-# projection, larger images are distorted at their edges, so there is some
-# trade-off between ensuring images have minimal distortion, and including the
-# largest craters in the image.
-rawlen_range = [600., 2000.]
+# Range of image widths, in pixels, to crop from source image (input images
+# will be scaled down to ilen). For Orthogonal projection, larger images are
+# distorted at their edges, so there is some trade-off between ensuring images
+# have minimal distortion, and including the largest craters in the image.
+rawlen_range = [512., 4096.]
 
-# Final size of input images.
+# Distribution to sample from rawlen_range - "uniform" for uniform, and "log"
+# for loguniform.
+rawlen_dist = 'log'
+
+# Size of input images.
 ilen = 256
-# Final size of target images.
-tlen = 256
+
+# Size of target images.
+tglen = 256
 
 # [Min long, max long, min lat, max lat] dimensions of source image.
-source_cdim = [-180, 180, -90, 90]
+source_cdim = [-180, 180, -60, 60]
 
 # [Min long, max long, min lat, max lat] dimensions of the region of the source
 # to use when randomly cropping.  Used to distinguish training from test sets.
-sub_cdim = [-180, 180, -90, 90]
+sub_cdim = [-180, 180, -60, 60]
 
 # Minimum pixel diameter of craters to include in in the target.
 minpix = 1.
@@ -86,45 +85,21 @@ R_km = 1737.4
 # Type of target to make - "dens" for density map, "mask" for mask.
 maketype = "mask"
 
-# Initialize target mapping kernel arguments.
-tmap_args = {}
-
 # If True, truncate mask where image has padding.
-tmap_args["truncate"] = True
-
-# Mask arguments (can ignore if using density maps).
+truncate = True
 
 # If True, use rings.  If False, use filled circles.
-tmap_args["rings"] = False
+rings = True
 
-# If tmap_args["rings"] = True, thickness of ring in pixels.
-tmap_args["ringwidth"] = 1
+# If rings = True, thickness of ring in pixels.
+ringwidth = 1
 
 # If True, sets all non-zero target pixels to unity (if False, circle overlaps
 # and ring intersections will have larger values.)
-tmap_args["binary"] = True
+binary = True
 
-### Density map-specific args (can ignore if using masks). ###
-
-# Specifies type of kernel to use.  See make_density_map docstring for further
-# details on kernel parameters below.
-tmap_args["kernel"] = None
-
-# Kernel support (i.e. size of kernel stencil) coefficient.  kernel_support, in
-# pixels, is determined by kernel_support = k_support*sigma.
-tmap_args["k_support"] = 8
-
-# Sigma for constant sigma kernel (kernel = None).
-tmap_args["k_sig"] = 3.
-
-# k nearest neighbours, used when kernel = "knn".
-tmap_args["knn"] = 10
-
-# Beta value used to calculate sigma when kernel = "knn".
-tmap_args["beta"] = 0.2
-
-# If kernel is custom function, dictionary of arguments passed to kernel.
-tmap_args["kdict"] = {}
+# If True, script prints out the image it's currently working on.
+verbose = True
 
 ########## Script ##########
 
@@ -141,27 +116,20 @@ if __name__ == '__main__':
     else:
         istart = 0
 
-    # Read source image
+    # Read source image and crater catalogs.
     img = Image.open(source_image_path).convert("L")
-        
-    if sub_cdim != source_cdim:
-        img = mkin.InitialImageCut(img, source_cdim, sub_cdim)
-
     craters = mkin.ReadLROCHeadCombinedCraterCSV(filelroc=lroc_csv_path,
                                                  filehead=head_csv_path)
-    # Co-opt ResampleCraters to remove all craters beyond subset cdim
-    # keep minpix = 0 (since we don't have pixel diameters yet)
+
+    # Sample subset of image.  Co-opt mkin.ResampleCraters to remove all
+    # craters beyond subset cdim.
+    if sub_cdim != source_cdim:
+        img = mkin.InitialImageCut(img, source_cdim, sub_cdim)
     craters = mkin.ResampleCraters(craters, sub_cdim, None, arad=R_km)
 
-    # Generate input images
-    print("Generating input images")
+    # Generate input images.
     mkin.GenDataset(img, craters, outhead, rawlen_range=rawlen_range,
-                    rawlen_dist=
-                    ilen=ilen,
-                    cdim=sub_cdim, arad=R_km, amt=amt, zeropad=zeropad,
-                    minpix=minpix, slivercut=slivercut, istart=istart)
-
-def GenDataset(img, craters, outhead, rawlen_range=[512, 4096],
-               rawlen_dist='log', ilen=256, cdim=[-180, 180, -60, 60],
-               arad=1737.4, minpix=0, tlen=256, binary=True, rings=True,
-               ringwidth=1, truncate=True, amt=100, istart=0, seed=None):
+                    rawlen_dist=rawlen_dist, ilen=ilen, cdim=sub_cdim,
+                    arad=R_km, minpix=minpix, tglen=tglen, binary=binary,
+                    rings=rings, ringwidth=ringwidth, truncate=truncate,
+                    amt=amt, istart=istart, verbose=verbose)
