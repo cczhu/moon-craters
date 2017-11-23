@@ -101,8 +101,8 @@ class CoordTest(unittest.TestCase):
                     y_gt_curr = y_gt
                 xy = np.r_[x, y]
                 xy_gt = np.r_[x_gt, y_gt_curr]
-                self.assertTrue(np.all(np.isclose(xy, xy_gt,
-                                rtol=1e-7, atol=1e-10)))
+                self.assertTrue(np.all(
+                    np.isclose(xy, xy_gt, rtol=1e-7, atol=1e-10)))
 
     def test_pix2coord(self):
 
@@ -114,23 +114,23 @@ class CoordTest(unittest.TestCase):
                                         origin=origin)
                 cxy = np.r_[cx, cy]
                 cxy_gt = np.r_[self.cx, self.cy]
-                self.assertTrue(np.all(np.isclose(cxy, cxy_gt,
-                                rtol=1e-7, atol=1e-10)))
+                self.assertTrue(np.all(
+                    np.isclose(cxy, cxy_gt, rtol=1e-7, atol=1e-10)))
 
     def test_km2pix(self):
 
-        mykmppix = 1500./(np.pi*1737.4)*0.5
+        mykmppix = 1500. / (np.pi * 1737.4) * 0.5
         kmppix = mkin.km2pix(1500., 180., dc=0.5, a=1737.4)
 
-        self.assertTrue( np.isclose(mykmppix, kmppix, 
-                        rtol=1e-7, atol=1e-10) )
+        self.assertTrue(np.isclose(mykmppix, kmppix, rtol=1e-7, atol=1e-10))
 
 
 class WarpTest(unittest.TestCase):
 
     def setUp(self):
 
-        self.img = Image.open("moonmap_tiny.png").convert("L")
+        self.img = Image.open(
+            'LunarLROLrocKaguya_1180mperpix_downsamp.png').convert("L")
         imgsize = list(self.img.size)
         self.img = self.img.crop([0, 0, 300, 300])
         self.img = self.img.resize([200, 200])
@@ -138,7 +138,7 @@ class WarpTest(unittest.TestCase):
         # Take top edge of long-lat bounds
         ix = np.array([0, 300])
         iy = np.array([0, 300])
-        cdim = [-180, 180, -90, 90]
+        cdim = [-180, 180, -60, 60]
         llong, llat = mkin.pix2coord(ix, iy, cdim, 
                             imgsize, origin="upper")
         self.llbd = np.r_[llong, llat[::-1]]
