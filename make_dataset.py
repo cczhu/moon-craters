@@ -122,9 +122,10 @@ if __name__ == '__main__':
                                                  filehead=head_csv_path)
 
     # Sample subset of image.  Co-opt mkin.ResampleCraters to remove all
-    # craters beyond subset cdim.
+    # craters beyond cdim (either sub or source).
     if sub_cdim != source_cdim:
         img = mkin.InitialImageCut(img, source_cdim, sub_cdim)
+    # This always works, since sub_cdim < source_cdim.
     craters = mkin.ResampleCraters(craters, sub_cdim, None, arad=R_km)
 
     # Generate input images.

@@ -367,37 +367,35 @@ def WarpImage(img, iproj, iextent, oproj, oextent,
                       "Returing input!")
         return img
 
-    else:
+    if origin == 'upper':
+        # Regridding operation implicitly assumes origin of image is
+        # 'lower', so adjust for that here.
+        img = img[::-1]
 
-        if origin == 'upper':
-            # Regridding operation implicitly assumes origin of image is
-            # 'lower', so adjust for that here.
-            img = img[::-1]
+    # rgcoeff is padding when we rescale the image with imshow.
+    regrid_shape = rgcoeff * min(img.shape)
+    regrid_shape = regrid_shape_aspect(regrid_shape,
+                                       oextent)
 
-        # The 1.2 is padding when we rescale the image with imshow.
-        regrid_shape = rgcoeff * min(img.shape)
-        regrid_shape = regrid_shape_aspect(regrid_shape,
-                                           oextent)
+    # cimg.warp_array uses cimg.mesh_projection, which cannot handle any
+    # zeros being used in iextent.  Create iextent_nz to fix.
+    iextent_nz = np.array(iextent)
+    iextent_nz[iextent_nz == 0] = 1e-8
+    iextent_nz = list(iextent_nz)
 
-        # cimg.warp_array uses cimg.mesh_projection, which cannot handle any
-        # zeros being used in iextent.  Create iextent_nz to fix.
-        iextent_nz = np.array(iextent)
-        iextent_nz[iextent_nz == 0] = 1e-8
-        iextent_nz = list(iextent_nz)
+    imgout, extent = cimg.warp_array(img,
+                                     source_proj=iproj,
+                                     source_extent=iextent_nz,
+                                     target_proj=oproj,
+                                     target_res=regrid_shape,
+                                     target_extent=oextent,
+                                     mask_extrapolated=True)
 
-        imgout, extent = cimg.warp_array(img,
-                                         source_proj=iproj,
-                                         source_extent=iextent_nz,
-                                         target_proj=oproj,
-                                         target_res=regrid_shape,
-                                         target_extent=oextent,
-                                         mask_extrapolated=True)
+    if origin == 'upper':
+        # Transform back.
+        imgout = imgout[::-1]
 
-        if origin == 'upper':
-            # Transform back.
-            imgout = imgout[::-1]
-
-        return imgout
+    return imgout
 
 
 def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
@@ -616,7 +614,7 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     xll = xll.ravel()
     yll = yll.ravel()
 
-    # [:,:2] becaus we don't need elevation data.
+    # [:,:2] because we don't need elevation data.
     res = iproj.transform_points(x=xll, y=yll, src_crs=geoproj)[:, :2]
     iextent = [min(res[:, 0]), max(res[:, 0]), min(res[:, 1]), max(res[:, 1])]
 
@@ -624,7 +622,7 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     oextent = [min(res[:, 0]), max(res[:, 0]), min(res[:, 1]), max(res[:, 1])]
 
     # Sanity check for narrow images; done before the most expensive part of
-    # function.
+    # the function.
     oaspect = (oextent[1] - oextent[0]) / (oextent[3] - oextent[2])
     if oaspect < slivercut:
         if dontsave:
@@ -1043,7 +1041,7 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         this size.  Default is 256.
     cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        [-180, 180, -90, 90].
+        LRO-Kaguya's [-180, 180, -60, 60].
     arad : float. optional
         World radius in km.  Defaults to Moon radius (1737.4 km).
     minpix : int, optional

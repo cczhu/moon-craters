@@ -1,4 +1,4 @@
-import unittest
+import pytest
 import make_input_data as mkin
 import re
 import pandas as pd
@@ -9,15 +9,11 @@ from PIL import Image
 from scipy import signal
 
 
-class CatalogueTest(unittest.TestCase):
+class TestCatalogue(object):
     """Tests crater catalogues."""
 
-    def setUp(self):
-
+    def setup(self):
         # Head et al. dataset.
-        self.lrochead = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=True)
-
-        # Craters with identical latitudes are s
         head = pd.read_csv('./HeadCraters.csv', header=0,
                            names=['Long', 'Lat', 'Diameter (km)'])
         lroc = pd.read_csv('./LROCCraters.csv', usecols=range(2, 5), header=0)
@@ -28,8 +24,6 @@ class CatalogueTest(unittest.TestCase):
         self.lrochead_t.reset_index(inplace=True, drop=True)
 
         # Salamuniccar et al. dataset.
-        self.lroclu = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=True)
-
         sala_names = ("Long", "Lat", "Diameter (km)", "Name")
         sala_types = (float, float, float, str)
         sala = pd.read_csv('./LU78287GT.csv', usecols=(1, 2, 4, 7), header=0,
@@ -54,23 +48,25 @@ class CatalogueTest(unittest.TestCase):
         self.lroclu_t.sort_values(by='Lat', inplace=True)
         self.lroclu_t.reset_index(inplace=True, drop=True)
 
-    def tearDown(self):
-        self.lrochead = None
-        self.lrochead_t = None
-        self.lroclu = None
-        self.lroclu_t = None
-
     def test_dataframes_equal(self):
-        self.assertTrue(self.lrochead.equals(self.lrochead_t))
-        self.assertTrue(self.lroclu.equals(self.lroclu_t))
+        lroclu = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=True,
+                                                  sortlat=True)
+        lroclu_feat = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=False,
+                                                       sortlat=True)
+        lrochead = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=True)
+        lrochead_nosort = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=False)
+
+        assert np.all(lrochead == self.lrochead_t)
+        assert np.all(lroclu == self.lroclu_t)
+        assert lroclu.size < lroclu_feat.size
+        assert not np.all(lrochead == lrochead_nosort)
 
 
-class CoordTest(unittest.TestCase):
+class TestCoordinateTransforms(object):
     """Tests pix2coord and coord2pix
     """
 
-    def setUp(self):
-
+    def setup(self):
         origin = np.random.uniform(-30, 30, 2)
         extent = np.random.uniform(0, 45, 2)
         self.cdim = [origin[0], origin[0] + extent[0],
@@ -82,8 +78,8 @@ class CoordTest(unittest.TestCase):
         self.cy = np.array(
             [self.cdim[3], np.random.uniform(self.cdim[2] + 1, self.cdim[3])])
 
-    def test_coord2pix(self):
-
+    @pytest.mark.parametrize('origin', ('lower', 'upper'))
+    def test_coord2pix(self, origin):
         x_gt = (self.imgdim[0] *
                 (self.cx - self.cdim[0]) / (self.cdim[1] - self.cdim[0]))
         y_gt = (self.imgdim[1] *
@@ -91,49 +87,38 @@ class CoordTest(unittest.TestCase):
         yi_gt = (self.imgdim[1] *
                  (self.cdim[3] - self.cy) / (self.cdim[3] - self.cdim[2]))
 
-        for origin in ["lower", "upper"]:
-            with self.subTest(origin=origin):
-                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
-                                      self.imgdim, origin=origin)
-                if origin == "upper":
-                    y_gt_curr = yi_gt
-                else:
-                    y_gt_curr = y_gt
-                xy = np.r_[x, y]
-                xy_gt = np.r_[x_gt, y_gt_curr]
-                self.assertTrue(np.all(
-                    np.isclose(xy, xy_gt, rtol=1e-7, atol=1e-10)))
+        x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
+                              self.imgdim, origin=origin)
+        if origin == "upper":
+            y_gt_curr = yi_gt
+        else:
+            y_gt_curr = y_gt
+        xy = np.r_[x, y]
+        xy_gt = np.r_[x_gt, y_gt_curr]
+        assert np.all(np.isclose(xy, xy_gt, rtol=1e-7, atol=1e-10))
 
-    def test_pix2coord(self):
-
-        for origin in ["lower", "upper"]:
-            with self.subTest(origin=origin):
-                x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
-                                      self.imgdim, origin=origin)
-                cx, cy = mkin.pix2coord(x, y, self.cdim, self.imgdim,
-                                        origin=origin)
-                cxy = np.r_[cx, cy]
-                cxy_gt = np.r_[self.cx, self.cy]
-                self.assertTrue(np.all(
-                    np.isclose(cxy, cxy_gt, rtol=1e-7, atol=1e-10)))
+    @pytest.mark.parametrize('origin', ('lower', 'upper'))
+    def test_pix2coord(self, origin):
+        x, y = mkin.coord2pix(self.cx, self.cy, self.cdim,
+                              self.imgdim, origin=origin)
+        cx, cy = mkin.pix2coord(x, y, self.cdim, self.imgdim,
+                                origin=origin)
+        cxy = np.r_[cx, cy]
+        cxy_gt = np.r_[self.cx, self.cy]
+        assert np.all(np.isclose(cxy, cxy_gt, rtol=1e-7, atol=1e-10))
 
     def test_km2pix(self):
-
         mykmppix = 1500. / (np.pi * 1737.4) * 0.5
         kmppix = mkin.km2pix(1500., 180., dc=0.5, a=1737.4)
+        assert np.isclose(mykmppix, kmppix, rtol=1e-7, atol=1e-10)
 
-        self.assertTrue(np.isclose(mykmppix, kmppix, rtol=1e-7, atol=1e-10))
 
+class WarpTest(object):
 
-class WarpTest(unittest.TestCase):
-
-    def setUp(self):
+    def setup(self):
 
         self.img = Image.open(
             'LunarLROLrocKaguya_1180mperpix_downsamp.png').convert("L")
-        imgsize = list(self.img.size)
-        self.img = self.img.crop([0, 0, 300, 300])
-        self.img = self.img.resize([200, 200])
 
         # Take top edge of long-lat bounds
         ix = np.array([0, 300])
@@ -175,11 +160,6 @@ class WarpTest(unittest.TestCase):
                                 columns=["Long", "Lat"])
         self.craters["Diameter (km)"] = [10, 10, 10]
 
-
-    def tearDown(self):
-        self.img = None
-
-
     def test_warpimage(self):
 
         img = np.asanyarray(self.img)
@@ -208,7 +188,6 @@ class WarpTest(unittest.TestCase):
                         imgoutmkin.ravel(), 
                         rtol=1e-6, atol=1e-10)) )
 
-
     def test_warpcraters(self):
 
         # Not the real image dimensions, but whatever
@@ -233,7 +212,6 @@ class WarpTest(unittest.TestCase):
 
         self.assertTrue( np.all(np.isclose(xy, xy_gt, 
                         rtol=1e-7, atol=1e-10)) )
-
 
     def test_pctoortho(self):
 
@@ -267,9 +245,9 @@ class WarpTest(unittest.TestCase):
         self.assertTrue( ctr_xy.equals(ctr_xy2) )
 
 
-class DensMapTest(unittest.TestCase):
+class DensMapTest(object):
 
-    def setUp(self):
+    def setup(self):
 
         self.img =  np.asanyarray(Image.open("moonmap_tiny.png").convert("L"))
         self.craters = mkin.ReadCombinedCraterCSV(dropfeatures=True)
@@ -333,36 +311,3 @@ class DensMapTest(unittest.TestCase):
         img2_dm = mkin.make_density_map(self.craters2, self.img2.shape, k_sig=kernel_sig, k_support=kernel_extent)
 
         self.assertTrue( np.isclose(img2_dm_c2, img2_dm, rtol=1e-05, atol=1e-06).sum()/ img2_dm.size )
-
-
-def run_cataloguetest():
-    suite = unittest.TestLoader().loadTestsFromTestCase(CatalogueTest)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
-
-def run_coordtest():
-    suite = unittest.TestLoader().loadTestsFromTestCase(CoordTest)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
-
-def run_warptest():
-    suite = unittest.TestLoader().loadTestsFromTestCase(WarpTest)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
-
-def run_dmtest():
-    suite = unittest.TestLoader().loadTestsFromTestCase(DensMapTest)
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
-
-def run_everything():
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(CatalogueTest))
-    suite.addTest(unittest.makeSuite(CoordTest))
-    suite.addTest(unittest.makeSuite(WarpTest))
-    suite.addTest(unittest.makeSuite(DensMapTest))
-    unittest.TextTestRunner(verbosity=2).run(suite)
-
-
-if __name__ == '__main__':
-    unittest.main()
