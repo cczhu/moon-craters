@@ -549,7 +549,7 @@ def WarpCraterLoc(craters, geoproj, oproj, oextent, imgdim, llbd=None,
 
 def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
                                 ctr_sub=False, arad=1737.4, origin="upper",
-                                rgcoeff=1.2, slivercut=0., dontsave=False):
+                                rgcoeff=1.2, slivercut=0.):
     """Transform Plate Carree image and associated csv file into Orthographic.
 
     Parameters
@@ -581,15 +581,16 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     slivercut : float from 0 to 1, optional
         If transformed image aspect ratio is too narrow (and would lead to a
         lot of padding, return null images).
-    dontsave : bool, optional
-        To save or not to save, that is the queseiton.
 
-    Returns (only if dontsave = True)
-    ---------------------------------
+    Returns
+    -------
     imgo : PIL.Image.image
         Transformed, padded image in PIL.Image format.
     ctr_xy : pandas.DataFrame
         Craters with transformed x, y pixel positions and pixel radii.
+    distortion_coefficient : float
+        Ratio between the central heights of the transformed image and original
+        image.
     """
 
     # If user doesn't provide Moon globe properties.
@@ -625,9 +626,7 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     # the function.
     oaspect = (oextent[1] - oextent[0]) / (oextent[3] - oextent[2])
     if oaspect < slivercut:
-        if dontsave:
-            return [None, None]
-        return
+        return [None, None]
 
     if type(img) != Image.Image:
         img = Image.open(img).convert("L")
@@ -651,24 +650,23 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     # Pixel scale for orthographic determined (for images small enough that
     # tan(x) approximately equals x + 1/3x^3 + ...) by l = R_moon*theta,
     # where theta is the latitude extent of the centre of the image.  Because
-    # projection transform doesn't guarantee central axis will keep its pixel
-    # resolution, we need to calculate the conversion coefficient
+    # projection transform doesn't guarantee central vertical axis will keep
+    # its pixel resolution, we need to calculate the conversion coefficient
     #   C = (res[7,1]- res[1,1])/(oextent[3] - oextent[2]).
     #   C0*pix height/C = theta
     # Where theta is the latitude extent and C0 is the theta per pixel
     # conversion for the Plate Carree image).  Thus
     #   l_ctr = R_moon*C0*pix_ctr/C.
-    Cd = (res[7, 1] - res[1, 1]) / (oextent[3] - oextent[2])
-    if Cd < 0.7:
-        raise ValueError("Cd cannot be {0:.2f}!".format(Cd))
-    pxperkm = km2pix(imgo.size[1], llbd[3] - llbd[2], dc=Cd, a=arad)
+    distortion_coefficient = ((res[7, 1] - res[1, 1]) /
+                              (oextent[3] - oextent[2]))
+    if distortion_coefficient < 0.7:
+        raise ValueError("Distortion Coefficient cannot be"
+                         " {0:.2f}!".format(distortion_coefficient))
+    pxperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
+                     dc=distortion_coefficient, a=arad)
     ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pxperkm
 
-    if dontsave:
-        return [imgo, ctr_xy]
-
-    imgo.save(oname)
-    ctr_xy.to_csv(oname.split(".png")[0] + ".csv", index=False)
+    return [imgo, ctr_xy, distortion_coefficient]
 
 ############# Create target dataset (and helper functions) #############
 
@@ -1107,6 +1105,9 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
     imgs_h5_box = imgs_h5.create_group("pix_bounds")
     imgs_h5_box.attrs['definition'] = ("Pixel bounds of the Global DEM region"
                                        " that was cropped for the image.")
+    imgs_h5_dc = imgs_h5.create_group("pix_distortion_coefficient")
+    imgs_h5_dc.attrs['definition'] = ("Distortion coefficient due to "
+                                      "projection transformation.")
     craters_h5 = pd.HDFStore(outhead + '_craters.hdf5', 'w')
 
     # Zero-padding for hdf5 keys.
@@ -1145,9 +1146,9 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                                   minpix=minpix)
 
         # Convert Plate Carree to Orthographic.
-        [imgo, ctr_xy] = PlateCarree_to_Orthographic(
+        [imgo, ctr_xy, distortion_coefficient] = PlateCarree_to_Orthographic(
             im, None, llbd, ctr_sub, iglobe=iglobe, ctr_sub=True, arad=arad,
-            origin=origin, rgcoeff=1.2, dontsave=True, slivercut=0.5)
+            origin=origin, rgcoeff=1.2, slivercut=0.5)
 
         # Check imgo validity.
         # if imgo is None:
@@ -1164,9 +1165,8 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                                     "image.")
 
         # Make target mask.  Used Image.BILINEAR resampling because
-        # Image.NEAREST creates artifacts.  Image.LANZCOS could also be used,
-        # but is more expensive (though try that one if BILINEAR gives
-        # crap).
+        # Image.NEAREST creates artifacts.  Try Image.LANZCOS if BILINEAR still
+        # leaves artifacts).
         tgt = np.asanyarray(imgo.resize((tglen, tglen),
                                         resample=Image.BILINEAR))
         mask = make_mask(ctr_xy, tgt, binary=binary, rings=rings,
@@ -1180,6 +1180,8 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         sds_box[...] = box
         sds_llbd = imgs_h5_llbd.create_dataset(img_number, (4,), dtype='float')
         sds_llbd[...] = llbd
+        sds_dc = imgs_h5_dc.create_dataset(img_number, (1,), dtype='float')
+        sds_dc[...] = np.array([distortion_coefficient])
 
         craters_h5[img_number] = ctr_xy
 
