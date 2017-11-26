@@ -167,7 +167,7 @@ def DropSatelliteCraters(craters):
     craters.drop(drop_index, inplace=True)
 
 
-def ReadLROCLUCombinedCraterCSV(filealan="./LROCCraters.csv",
+def ReadLROCLUCombinedCraterCSV(filelroc="./LROCCraters.csv",
                                 filelu="./LU78287GT.csv",
                                 dropfeatures=False, sortlat=True):
     """Combines LROC 5 - 20 km crater dataset with Goran Salamuniccar craters
@@ -175,7 +175,7 @@ def ReadLROCLUCombinedCraterCSV(filealan="./LROCCraters.csv",
 
     Parameters
     ----------
-    filealan : str, optional
+    filelroc : str, optional
         LROC crater file location.  Defaults to the one in the current folder.
     filelu : str, optional
         Salamuniccar crater file location.  Defaults to the one in the current
@@ -201,7 +201,7 @@ def ReadLROCLUCombinedCraterCSV(filealan="./LROCCraters.csv",
                  axis=1, inplace=True)
     craters = craters[craters["Diameter (km)"] > 20]
 
-    craters_lroc = pd.read_csv(filealan, header=0, usecols=list(range(2, 5)))
+    craters_lroc = pd.read_csv(filelroc, header=0, usecols=list(range(2, 5)))
 
     craters = pd.concat([craters, craters_lroc], axis=0, ignore_index=True,
                         copy=True)
