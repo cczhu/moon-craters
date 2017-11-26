@@ -341,8 +341,21 @@ def km2pix(imgheight, latextent, dc=1., a=1737.4):
 ########## Warp Images and CSVs ##########
 
 def regrid_shape_aspect(regrid_shape, target_extent):
-    """Helper function copied from cartopy.img_transform for setting
-    regridding shape which is used in several plotting methods.
+    """Helper function copied from cartopy.img_transform for resizing an image
+    without changing its aspect ratio.
+
+    Parameters
+    ----------
+    regrid_shape : int or float
+        Target length of the shorter axis (in units of pixels).
+    target_extent : some
+        Width and height of the target image (generally not in units of
+        pixels).
+
+    Returns
+    -------
+    regrid_shape : tuple
+        Width and height of the target image in pixels.
     """
     if not isinstance(regrid_shape, collections.Sequence):
         target_size = int(regrid_shape)
@@ -358,8 +371,28 @@ def regrid_shape_aspect(regrid_shape, target_extent):
 def WarpImage(img, iproj, iextent, oproj, oextent,
               origin="upper", rgcoeff=1.2):
     """Warps images with cartopy.img_transform.warp_array, then plots them with
-    imshow.  Based on cartopy.mpl.geoaxes.imshow.  Parameter descriptions are
-    identical to those in WarpImagePad.
+    imshow.  Based on cartopy.mpl.geoaxes.imshow.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image as a 2D array.
+    iproj : cartopy.crs.Projection instance
+        Input coordinate system.
+    iextent : list-like
+        Coordinate limits (x_min, x_max, y_min, y_max) of input.
+    oproj : cartopy.crs.Projection instance
+        Output coordinate system.
+    oextent : list-like
+        Coordinate limits (x_min, x_max, y_min, y_max) of output.
+    origin : "lower" or "upper", optional
+        Based on imshow convention for displaying image y-axis.  "upper" means
+        [0,0] is in the upper-left corner of the image; "lower" means it's in
+        the bottom-left.
+    rgcoeff : float, optional
+        Fractional size increase of transformed image height.  Generically set
+        to 1.2 to prevent loss of fidelity during transform (though some of it
+        is inevitably lost due to warping).
     """
 
     if iproj == oproj:
@@ -372,20 +405,20 @@ def WarpImage(img, iproj, iextent, oproj, oextent,
         # 'lower', so adjust for that here.
         img = img[::-1]
 
-    # rgcoeff is padding when we rescale the image with imshow.
+    # rgcoeff is padding when we rescale the image later.
     regrid_shape = rgcoeff * min(img.shape)
     regrid_shape = regrid_shape_aspect(regrid_shape,
                                        oextent)
 
     # cimg.warp_array uses cimg.mesh_projection, which cannot handle any
-    # zeros being used in iextent.  Create iextent_nz to fix.
-    iextent_nz = np.array(iextent)
-    iextent_nz[iextent_nz == 0] = 1e-8
-    iextent_nz = list(iextent_nz)
+    # zeros being used in iextent.  Create iextent_nozeros to fix.
+    iextent_nozeros = np.array(iextent)
+    iextent_nozeros[iextent_nozeros == 0] = 1e-8
+    iextent_nozeros = list(iextent_nozeros)
 
     imgout, extent = cimg.warp_array(img,
                                      source_proj=iproj,
-                                     source_extent=iextent_nz,
+                                     source_extent=iextent_nozeros,
                                      target_proj=oproj,
                                      target_res=regrid_shape,
                                      target_extent=oextent,
@@ -406,26 +439,23 @@ def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
     Parameters
     ----------
     img : numpy.ndarray
-        Image as a 2D array
+        Image as a 2D array.
     iproj : cartopy.crs.Projection instance
-        Input coordinate system
+        Input coordinate system.
     iextent : list-like
-        Coordinate limits (x_min, x_max, y_min, y_max)
-        of input
+        Coordinate limits (x_min, x_max, y_min, y_max) of input.
     oproj : cartopy.crs.Projection instance
-        Output coordinate system
+        Output coordinate system.
     oextent : list-like
-        Coordinate limits (x_min, x_max, y_min, y_max)
-        of output
+        Coordinate limits (x_min, x_max, y_min, y_max) of output.
     origin : "lower" or "upper", optional
-        Based on imshow convention for displaying image y-axis.
-        "upper" means that [0,0] is upper-left corner of image;
-        "lower" means it is bottom-left.
+        Based on imshow convention for displaying image y-axis.  "upper" means
+        [0,0] is in the upper-left corner of the image; "lower" means it's in
+        the bottom-left.
     rgcoeff : float, optional
-        Fractional size increase of transformed image height;
-        generically set to 1.2 to prevent loss of fidelity
-        during transform (though warping can be so extreme
-        that this might be meaningless)
+        Fractional size increase of transformed image height.  Generically set
+        to 1.2 to prevent loss of fidelity during transform (though some of it
+        is inevitably lost due to warping).
     fillbg : 'black' or 'white'; optional.
         Fills padding with either black (0) or white (255) values.  Default is
         black.
