@@ -432,7 +432,7 @@ def WarpImage(img, iproj, iextent, oproj, oextent,
 
 
 def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
-                 rgcoeff=1.2, fillbg="white"):
+                 rgcoeff=1.2, fillbg="black", original_dims=True):
     """Wrapper for WarpImage that adds padding to warped image to make it the
     same size as the original.
 
@@ -456,18 +456,26 @@ def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
         Fractional size increase of transformed image height.  Generically set
         to 1.2 to prevent loss of fidelity during transform (though some of it
         is inevitably lost due to warping).
-    fillbg : 'black' or 'white'; optional.
+    fillbg : 'black' or 'white', optional.
         Fills padding with either black (0) or white (255) values.  Default is
         black.
+    original_dims : bool, optional
+        If True, rescale and add additional padding to keep exact dimensions of
+        original image.  Warped image will be sized to fit the original
+        image's smaller axis.
 
     Returns
     -------
+    If original_dims == True:
     imgo : PIL.Image.Image
-        Warped image with padding
+        Warped image with padding, resized to the original image's dimensions.
     imgw.size : tuple
         Width, height of picture without padding
     offset : tuple
         Pixel width of (left, top)-side padding
+    If original_dims == False:
+    imgw : PIL.Image.Image
+        Warped image with padding.
     """
     # Based off of <https://stackoverflow.com/questions/2563822/
     # how-do-you-composite-an-image-onto-another-image-with-pil-in-python>
@@ -492,27 +500,31 @@ def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
     imgw = np.ma.filled(imgw, fill_value=bgval)
     imgw = Image.fromarray(imgw, mode="L")
 
-    # Resize to height of original, maintaining aspect ratio.  Note
-    # img.shape = height, width, and imgw.size and imgo.size = width, height.
-    imgw_loh = imgw.size[0] / imgw.size[1]
+    if original_dims:
+        # Resize to height of original, maintaining aspect ratio.  Note
+        # img.shape = height, width, and imgw.size and
+        # imgo.size = width, height.
+        imgw_loh = imgw.size[0] / imgw.size[1]
 
-    # If imgw is stretched horizontally compared to img.
-    if imgw_loh > (img.shape[1] / img.shape[0]):
-        imgw = imgw.resize([img.shape[0],
-                            int(np.round(img.shape[0] / imgw_loh))],
-                           resample=Image.NEAREST)
-    # If imgw is stretched vertically.
-    else:
-        imgw = imgw.resize([int(np.round(imgw_loh * img.shape[0])),
-                            img.shape[0]], resample=Image.NEAREST)
+        # If imgw is stretched horizontally compared to img.
+        if imgw_loh > (img.shape[1] / img.shape[0]):
+            imgw = imgw.resize([img.shape[0],
+                                int(np.round(img.shape[0] / imgw_loh))],
+                               resample=Image.NEAREST)
+        # If imgw is stretched vertically.
+        else:
+            imgw = imgw.resize([int(np.round(imgw_loh * img.shape[0])),
+                                img.shape[0]], resample=Image.NEAREST)
 
-    # Make background image and paste two together.
-    imgo = Image.new('L', (img.shape[1], img.shape[0]), (bgval))
-    offset = ((imgo.size[0] - imgw.size[0]) // 2,
-              (imgo.size[1] - imgw.size[1]) // 2)
-    imgo.paste(imgw, offset)
+        # Make background image and paste two together.
+        imgo = Image.new('L', (img.shape[1], img.shape[0]), (bgval))
+        offset = ((imgo.size[0] - imgw.size[0]) // 2,
+                  (imgo.size[1] - imgw.size[1]) // 2)
+        imgo.paste(imgw, offset)
 
-    return imgo, imgw.size, offset
+        return imgo, imgw.size, offset
+
+    return imgw
 
 
 def WarpCraterLoc(craters, geoproj, oproj, oextent, imgdim, llbd=None,
@@ -574,6 +586,31 @@ def WarpCraterLoc(craters, geoproj, oproj, oextent, imgdim, llbd=None,
         ctr_wrp["y"] = []
 
     return ctr_wrp
+
+########## Cropping Helper Functions ##########
+
+def is_crater_out_of_box(ctr, box=[0, 0, 0, 0], pad=2):
+    """ Determine if a crater's rim falls within a box.
+
+    Helper function to PlateCarree_to_Orthographic_Cropped for determining
+    whether to discard crater data when cropping out the central region of the
+    transformed image.
+    """
+    # Integer floor of (crater radius / sqrt(2)) - padding.
+    ctr_rad_sqrt2_pad = int(ctr['Diameter (pix)'] / (2. * np.sqrt(2))) - pad
+    # Check if a crater's centre falls beyond the box of size
+    #     [box[0] - ctr_rad_sqrt2_pad, box[1] - ctr_rad_sqrt2_pad,
+    #      box[2] + ctr_rad_sqrt2_pad, box[3] + ctr_rad_sqrt2_pad]
+    # which approximates the furthest a circle's centre can get from the box
+    # while part of it still falls within the box.  Can do a more accurate cut
+    # with a slightly larger box that had rounded corners, but that's a lot of
+    # effort and computation for little gain.
+    if ((ctr['x'] > box[0] - ctr_rad_sqrt2_pad) &
+            (ctr['x'] < box[2] + ctr_rad_sqrt2_pad) &
+            (ctr['y'] > box[1] - ctr_rad_sqrt2_pad) &
+            (ctr['y'] < box[3] + ctr_rad_sqrt2_pad)):
+        return False
+    return True
 
 ############# Warp Plate Carree to Orthographic ###############
 
@@ -661,9 +698,10 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     if type(img) != Image.Image:
         img = Image.open(img).convert("L")
 
+    # Warp image.
     imgo, imgwshp, offset = WarpImagePad(img, iproj, iextent, oproj, oextent,
                                          origin=origin, rgcoeff=rgcoeff,
-                                         fillbg="black")
+                                         fillbg="black", original_dims=True)
 
     # Convert crater x, y position.
     if ctr_sub:
@@ -692,11 +730,143 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     if distortion_coefficient < 0.7:
         raise ValueError("Distortion Coefficient cannot be"
                          " {0:.2f}!".format(distortion_coefficient))
-    pxperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
-                     dc=distortion_coefficient, a=arad)
-    ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pxperkm
+    pixperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
+                      dc=distortion_coefficient, a=arad)
+    ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pixperkm
 
     return [imgo, ctr_xy, distortion_coefficient]
+
+
+def PlateCarree_to_Orthographic_Cropped(img, ilen, llbd, craters, iglobe=None,
+                                        arad=1737.4, origin="upper",
+                                        rgcoeff=1.3, paderr=0.7):
+    """Transform Plate Carree image and associated csv file into Orthographic.
+
+    Parameters
+    ----------
+    img : PIL.Image.image
+        Image file.
+    ilen : int
+        Size of central region of image to crop.
+    llbd : list-like
+        Long/lat limits (long_min, long_max, lat_min, lat_max) of image.
+    craters : pandas.DataFrame
+        Craters catalogue.  To minimize cropping time, include only craters
+        within larger image.
+    iglobe : cartopy.crs.Geodetic instance
+        Globe for images.  If False, defaults to spherical Moon.
+    arad : float
+        World radius in km.  Default is Moon (1737.4 km).
+    origin : "lower" or "upper", optional
+        Based on imshow convention for displaying image y-axis.  "upper"
+        (default) means that [0,0] is upper-left corner of image; "lower" means
+        it is bottom-left.
+    rgcoeff : float, optional
+        Fractional size increase of transformed image height.  By default set
+        to 1.2 to prevent loss of fidelity during transform (though warping can
+        be so extreme that this might be meaningless).
+    paderr : float from 0 to 1, optional
+        If not zero, throw an exception if the transformed image aspect ratio
+        is below this value.
+
+    Returns
+    -------
+    imgo : PIL.Image.image
+        Transformed, padded image in PIL.Image format.
+    ctr_xy : pandas.DataFrame
+        Craters with transformed x, y pixel positions and pixel radii.
+    pixperkm : float
+        Conversion factor between km and image pixel.
+    """
+
+    # If user doesn't provide Moon globe properties.
+    if not iglobe:
+        iglobe = ccrs.Globe(semimajor_axis=arad*1000.,
+                            semiminor_axis=arad*1000., ellipse=None)
+
+    # Set up Geodetic (long/lat), Plate Carree (usually long/lat, but not when
+    # globe != WGS84) and Orthographic projections.
+    geoproj = ccrs.Geodetic(globe=iglobe)
+    iproj = ccrs.PlateCarree(globe=iglobe)
+    oproj = ccrs.Orthographic(central_longitude=np.mean(llbd[:2]),
+                              central_latitude=np.mean(llbd[2:]),
+                              globe=iglobe)
+
+    # Create and transform coordinates of image corners and edge midpoints.
+    # Due to Plate Carree and Orthographic's symmetries, max/min x/y values of
+    # these 9 points represent extrema of the transformed image.
+    xll = np.array([llbd[0], np.mean(llbd[:2]), llbd[1]])
+    yll = np.array([llbd[2], np.mean(llbd[2:]), llbd[3]])
+    xll, yll = np.meshgrid(xll, yll)
+    xll = xll.ravel()
+    yll = yll.ravel()
+
+    # [:,:2] because we don't need elevation data.
+    res = iproj.transform_points(x=xll, y=yll, src_crs=geoproj)[:, :2]
+    iextent = [min(res[:, 0]), max(res[:, 0]), min(res[:, 1]), max(res[:, 1])]
+
+    res = oproj.transform_points(x=xll, y=yll, src_crs=geoproj)[:, :2]
+    oextent = [min(res[:, 0]), max(res[:, 0]), min(res[:, 1]), max(res[:, 1])]
+
+    # Sanity check for narrow images; done before the most expensive part of
+    # the function.
+    oaspect = (oextent[1] - oextent[0]) / (oextent[3] - oextent[2])
+    if oaspect < paderr:
+        raise ValueError("Aspect ratio {0} has fallen below {1}!  Try "
+                         "elongating the input image.".format(oaspect, paderr))
+
+    # Transform the image from Plate Carree to orthographic.
+    imgo = WarpImagePad(img, iproj, iextent, oproj, oextent, origin=origin,
+                        rgcoeff=rgcoeff, fillbg="black", original_dims=False)
+
+    # The projection transform doesn't guarantee the central vertical axis of
+    # the new image will be free of padding (thus throwing off pixel-to-km
+    # scaling relations). Calculate the distortion_coefficient, the fraction of
+    # the central vertical axis that is not padding.
+    distortion_coefficient = ((res[7, 1] - res[1, 1]) /
+                              (oextent[3] - oextent[2]))
+    if distortion_coefficient < 0.7:
+        raise ValueError("Distortion coefficient {0} has fallen below {1}!"
+                         "Try reducing input image elongation, or using a"
+                         "smaller overall image".format(
+                             distortion_coefficient, 0.7))
+
+    # Resize the image (including correcting for central vertical axis
+    # padding).
+    corrected_height = np.round(img.size[1] /
+                                distortion_coefficient).astype(int)
+    imgo = imgo.resize([np.round(imgo.size[0] / imgo.size[1] *
+                                 corrected_height).astype(int),
+                        corrected_height], resample=Image.NEAREST)
+
+    # Convert crater x, y position.
+    ctr_xy = WarpCraterLoc(craters, geoproj, oproj, oextent, imgo.size,
+                           llbd=None, origin=origin)
+    # Calculate crater pixel diameters.  Even though we've used
+    # distortion_correction to enlarge the image, we still need to pass
+    # distortion correction into km2pix.
+    pixperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
+                      dc=distortion_coefficient, a=arad)
+    ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pixperkm
+
+    # Determine x, y offset for central region of image.
+    offset = [(imgo.size[0] - ilen) // 2, (imgo.size[1] - ilen) // 2]
+    cropbox = [offset[0], offset[1], offset[0] + ilen, offset[1] + ilen]
+
+    # Crop central image
+    imgo_crop = imgo.crop(cropbox)
+
+    drop_craters = ctr_xy.apply(is_crater_out_of_box, axis=1,
+                                box=cropbox, pad=2)
+    drop_index = drop_craters[drop_craters].index
+    ctr_xy.drop(drop_index, inplace=True)
+
+    # Shift crater x, y positions by offset (origin doesn't matter for y-shift,
+    # since padding is symmetric).
+    ctr_xy.loc[:, "x"] -= offset[0]
+    ctr_xy.loc[:, "y"] -= offset[1]
+
+    return [imgo_crop, ctr_xy, pixperkm]
 
 ############# Create target dataset (and helper functions) #############
 
@@ -996,8 +1166,8 @@ def ResampleCraters(craters, llbd, imgheight, arad=1737.4, minpix=0):
     if minpix > 0:
         # Obtain pixel per km conversion factor.  Use latitude because Plate
         # Carree doesn't distort along this axis.
-        pxperkm = km2pix(imgheight, llbd[3] - llbd[2], dc=1., a=arad)
-        minkm = minpix / pxperkm
+        pixperkm = km2pix(imgheight, llbd[3] - llbd[2], dc=1., a=arad)
+        minkm = minpix / pixperkm
 
         # Remove craters smaller than pixel limit.
         ctr_sub = ctr_sub[ctr_sub["Diameter (km)"] >= minkm]
@@ -1180,11 +1350,6 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
             im, None, llbd, ctr_sub, iglobe=iglobe, ctr_sub=True, arad=arad,
             origin=origin, rgcoeff=1.2, slivercut=0.5)
 
-        # Check imgo validity.
-        # if imgo is None:
-        #     raise TypeError("imgo is None!  This is because the aspect ratio "
-        #                     "of the image fell below height / width = 0.1.")
-
         if imgo is None:
             print("Discarding narrow image")
             continue
@@ -1212,6 +1377,202 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         sds_llbd[...] = llbd
         sds_dc = imgs_h5_dc.create_dataset(img_number, (1,), dtype='float')
         sds_dc[...] = np.array([distortion_coefficient])
+
+        craters_h5[img_number] = ctr_xy
+
+        imgs_h5.flush()
+        craters_h5.flush()
+        i += 1
+
+    imgs_h5.close()
+    craters_h5.close()
+
+
+def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
+                      rawlen_dist='log', rawlen_coeff=[2., 1.5],
+                      ilen=256, cdim=[-180, 180, -60, 60],
+                      arad=1737.4, minpix=0, tglen=256, ringwidth=1,
+                      truncate=True, amt=100, istart=0, seed=None,
+                      verbose=False):
+    """Generates random dataset from a global DEM and crater catalogue.
+
+    The function randomly samples images from a global digital elevation
+    map (DEM) that uses a Plate Carree projection.  The size of each image is
+    (width, height) = (rawlen * x_coeff, rawlen * y_coeff), where rawlen is
+    selected from a user specified distribution.  The image is then
+    downsampled such that its central (rawlen, rawlen) region now has size
+    (ilen, ilen) - we generally use ilen = 256.  The downsampled image is then
+    converted from Plate Carree to orthographic projection.  Finally all pixels
+    beyond the central (rawlen, rawlen) region are discarded.  This method of
+    sampling and transforming a larger image, and then cropping its central
+    region to obtain a final one, results in images that are relatively
+    distortion-free and don't have black borders at their edges.
+
+    Pixel coordinates and radii of catalogue craters that fall within each
+    image's long/lat bounds are used to generate a corresponding binary ring
+    mask.
+
+    Input and target images are saved to disk in hdf5 format.  Crater
+    positions and radii are also saved as a Pandas hdf5 store.
+
+    Parameters
+    ----------
+    img : PIL.Image.Image
+        Source image.
+    craters : pandas.DataFrame
+        Crater catalogue .csv.
+    outhead : str
+        Filepath and file prefix of the image and crater table hdf5 files.
+    rawlen_range : list-like, optional
+        Lower and upper bounds, in pixels, of the raw image width distribution.
+        When sampling, a rawlen is randomly chosen from within this range,
+        and a region (rawlen * x_coeff, rawlen * y_coeff) is sampled from the
+        source image.  To always sample the same sized image, set lower bound
+        to the same value as the upper.  Default is [1000, 2000].
+    rawlen_dist : 'uniform' or 'log', optional
+        Shape of the raw image width distribution.  'uniform' is uniform
+        sampling, and 'log' is loguniform sampling.
+    rawlen_coeff : list, optional
+        [x_coeff, y_coeff] multipliers used to sample from source.  Default is
+        [2., 1.5].
+    ilen : int, optional
+        Input image width, in pixels.  Sampled images will be downsampled
+        such that (rawlen, rawlen) is mapped to (ilen, ilen).  Default is
+        256. cdim : list-like, optional
+        Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
+        LRO-Kaguya's [-180, 180, -60, 60].
+    arad : float. optional
+        World radius in km.  Defaults to Moon radius (1737.4 km).
+    minpix : int, optional
+        Minimum crater diameter in pixels to be included in crater list.
+        Useful when the smallest craters in the catalogue are smaller than 1
+        pixel in diameter.
+    tglen : int, optional
+        Target image width, in pixels.
+    ringwidth : int, optional
+        Width (dr) of rings in the binary ring mask.
+    truncate : bool
+        Truncate mask wherever there is padding in the image.
+    amt : int, optional
+        Number of images to produce.  100 by default.
+    istart : int
+        Output file starting number, when creating datasets spanning multiple
+        files.
+    seed : int or None
+        np.random.seed input (for testing purposes).
+    verbose : bool
+        If True, prints out number of image being generated.
+    """
+
+    # just in case we ever make this user-selectable...
+    origin = "upper"
+
+    # Seed random number generator.
+    np.random.seed(seed)
+
+    # Get craters.
+    AddPlateCarree_XY(craters, list(img.size), cdim=cdim, origin=origin)
+
+    iglobe = ccrs.Globe(semimajor_axis=arad*1000., semiminor_axis=arad*1000.,
+                        ellipse=None)
+
+    # Create random sampler (either uniform or loguniform).
+    if rawlen_dist == 'log':
+        rawlen_min = np.log10(rawlen_range[0])
+        rawlen_max = np.log10(rawlen_range[1])
+
+        def random_sampler():
+            return int(10**np.random.uniform(rawlen_min, rawlen_max))
+    else:
+
+        def random_sampler():
+            return np.random.randint(rawlen_range[0], rawlen_range[1] + 1)
+
+    # Initialize output hdf5s.
+    imgs_h5 = h5py.File(outhead + '_images.hdf5', 'w')
+    imgs_h5_inputs = imgs_h5.create_dataset("input_images", (amt, ilen, ilen),
+                                            dtype='uint8')
+    imgs_h5_inputs.attrs['definition'] = "Input image dataset."
+    imgs_h5_tgts = imgs_h5.create_dataset("target_masks", (amt, tglen, tglen),
+                                          dtype='float32')
+    imgs_h5_tgts.attrs['definition'] = "Target mask dataset."
+    imgs_h5_box = imgs_h5.create_group("pix_bounds_large_img")
+    imgs_h5_box.attrs['definition'] = (
+        "Pixel bounds of the large image INITIALLY sampled from the Global "
+        "DEM.  This sampled image was then transformed and further cropped to "
+        "produce the input image.")
+    imgs_h5_ppkm = imgs_h5.create_group("pixperkm")
+    imgs_h5_ppkm.attrs['definition'] = ("Conversion factor from km to image "
+                                        "pixel.")
+    craters_h5 = pd.HDFStore(outhead + '_craters.hdf5', 'w')
+
+    # Zero-padding for hdf5 keys.
+    zeropad = int(np.log10(amt)) + 1
+
+    for i in range(amt):
+
+        # Current image number.
+        img_number = "img_{i:0{zp}d}".format(i=istart + i, zp=zeropad)
+        if verbose:
+            print("Generating {0}".format(img_number))
+
+        # Determine image size to crop.
+        rawlen = random_sampler()
+        rawlen_withpad = [np.ceil(rawlen_coeff[0] * rawlen).astype(int),
+                          np.ceil(rawlen_coeff[1] * rawlen).astype(int)]
+        xc = np.random.randint(0, img.size[0] - rawlen_withpad[0])
+        yc = np.random.randint(0, img.size[1] - rawlen_withpad[1])
+        box = np.array([xc, yc, xc + rawlen_withpad[0],
+                        yc + rawlen_withpad[1]], dtype='int32')
+
+        # Load necessary because crop may be a lazy operation; im.load() should
+        # copy it.  See <http://pillow.readthedocs.io/en/3.1.x/
+        # reference/Image.html>.
+        im = img.crop(box)
+        im.load()
+
+        # Obtain long/lat bounds for coordinate transform.
+        ix = box[::2]
+        iy = box[1::2]
+        llong, llat = pix2coord(ix, iy, cdim, list(img.size), origin=origin)
+        llbd = np.r_[llong, llat[::-1]]
+
+        # Downsample image.
+        im = im.resize([np.ceil(rawlen_coeff[0] * ilen).astype(int),
+                        np.ceil(rawlen_coeff[1] * ilen).astype(int)],
+                       resample=Image.NEAREST)
+
+        # Remove all craters that are too small to be seen in image.
+        ctr_sub = ResampleCraters(craters, llbd, im.size[1], arad=arad,
+                                  minpix=minpix)
+
+        # Convert Plate Carree to Orthographic.
+        [imgo, ctr_xy, pixperkm] = PlateCarree_to_Orthographic_Cropped(
+            im, ilen, llbd, ctr_sub, iglobe=iglobe, arad=arad, origin=origin,
+            rgcoeff=1.3, paderr=0.5)
+
+        imgo_arr = np.asanyarray(imgo)
+        assert imgo_arr.sum() > 0, ("Sum of imgo is zero!  There likely was "
+                                    "an error in projecting the cropped "
+                                    "image.")
+
+        # Make target mask.  Used Image.BILINEAR resampling because
+        # Image.NEAREST creates artifacts.  Try Image.LANZCOS if BILINEAR still
+        # leaves artifacts).
+        tgt = np.asanyarray(imgo.resize((tglen, tglen),
+                                        resample=Image.BILINEAR))
+        # Generate binary ring mask.
+        mask = make_mask(ctr_xy, tgt, binary=True, rings=True,
+                         ringwidth=ringwidth, truncate=truncate)
+
+        # Output everything to file.
+        imgs_h5_inputs[i, ...] = imgo_arr
+        imgs_h5_tgts[i, ...] = mask
+
+        sds_box = imgs_h5_box.create_dataset(img_number, (4,), dtype='int32')
+        sds_box[...] = box
+        sds_ppkm = imgs_h5_ppkm.create_dataset(img_number, (1,), dtype='float')
+        sds_ppkm[...] = np.array([pixperkm])
 
         craters_h5[img_number] = ctr_xy
 

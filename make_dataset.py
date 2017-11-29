@@ -51,15 +51,22 @@ outhead = "./input_data/train"
 # make).
 amt = 30000
 
-# Range of image widths, in pixels, to crop from source image (input images
-# will be scaled down to ilen). For Orthogonal projection, larger images are
-# distorted at their edges, so there is some trade-off between ensuring images
-# have minimal distortion, and including the largest craters in the image.
+# Lower and upper bounds, in pixels, of the raw image width distribution.
+# When sampling, a rawlen is randomly chosen from within this range,
+# and a region (rawlen * x_coeff, rawlen * y_coeff) is sampled from the
+# source image.  To always sample the same sized image, set lower bound
+# to the same value as the upper.   For Orthogonal projection, larger images
+# are distorted at their edges, so there is some trade-off between ensuring
+# images have minimal distortion, and including the largest craters in the
+# image.
 rawlen_range = [512., 4096.]
 
 # Distribution to sample from rawlen_range - "uniform" for uniform, and "log"
 # for loguniform.
 rawlen_dist = 'log'
+
+# [x_coeff, y_coeff] multipliers used to sample from source.
+rawlen_coeff = [2., 1.5]
 
 # Size of input images.
 ilen = 256
@@ -82,21 +89,11 @@ R_km = 1737.4
 
 ### Density map / mask arguments. ###
 
-# Type of target to make - "dens" for density map, "mask" for mask.
-maketype = "mask"
-
 # If True, truncate mask where image has padding.
 truncate = True
 
-# If True, use rings.  If False, use filled circles.
-rings = True
-
 # If rings = True, thickness of ring in pixels.
 ringwidth = 1
-
-# If True, sets all non-zero target pixels to unity (if False, circle overlaps
-# and ring intersections will have larger values.)
-binary = True
 
 # If True, script prints out the image it's currently working on.
 verbose = True
@@ -129,8 +126,8 @@ if __name__ == '__main__':
     craters = mkin.ResampleCraters(craters, sub_cdim, None, arad=R_km)
 
     # Generate input images.
-    mkin.GenDataset(img, craters, outhead, rawlen_range=rawlen_range,
-                    rawlen_dist=rawlen_dist, ilen=ilen, cdim=sub_cdim,
-                    arad=R_km, minpix=minpix, tglen=tglen, binary=binary,
-                    rings=rings, ringwidth=ringwidth, truncate=truncate,
-                    amt=amt, istart=istart, verbose=verbose)
+    mkin.GenCroppedDataset(img, craters, outhead, rawlen_range=rawlen_range,
+                           rawlen_dist=rawlen_dist, rawlen_coeff=rawlen_coeff,
+                           ilen=ilen, cdim=sub_cdim, arad=R_km, minpix=minpix,
+                           tglen=tglen, ringwidth=ringwidth, truncate=truncate,
+                           amt=amt, istart=istart, verbose=verbose)
