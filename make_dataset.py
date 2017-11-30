@@ -59,7 +59,7 @@ amt = 30000
 # are distorted at their edges, so there is some trade-off between ensuring
 # images have minimal distortion, and including the largest craters in the
 # image.
-rawlen_range = [512., 4096.]
+rawlen_range = [300, 4000]
 
 # Distribution to sample from rawlen_range - "uniform" for uniform, and "log"
 # for loguniform.
@@ -75,11 +75,11 @@ ilen = 256
 tglen = 256
 
 # [Min long, max long, min lat, max lat] dimensions of source image.
-source_cdim = [-180, 180, -60, 60]
+source_cdim = [-180., 180., -60., 60.]
 
 # [Min long, max long, min lat, max lat] dimensions of the region of the source
 # to use when randomly cropping.  Used to distinguish training from test sets.
-sub_cdim = [-180, 180, -60, 60]
+sub_cdim = [-180., 180., -60., 60.]
 
 # Minimum pixel diameter of craters to include in in the target.
 minpix = 1.

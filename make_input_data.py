@@ -1111,7 +1111,7 @@ def make_mask(craters, img, binary=True, rings=False, ringwidth=1,
 
 ############# Create dataset (and helper functions) #############
 
-def AddPlateCarree_XY(craters, imgdim, cdim=[-180, 180, -90, 90], 
+def AddPlateCarree_XY(craters, imgdim, cdim=[-180., 180., -90., 90.], 
                       origin="upper"):
     """Adds x and y pixel locations to craters dataframe.
 
@@ -1123,7 +1123,7 @@ def AddPlateCarree_XY(craters, imgdim, cdim=[-180, 180, -90, 90],
         Length and height of image, in pixels
     cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        [-180, 180, -90, 90].
+        [-180., 180., -90., 90.].
     origin : "upper" or "lower", optional
         Based on imshow convention for displaying image y-axis.
         "upper" means that [0,0] is upper-left corner of image;
@@ -1206,7 +1206,7 @@ def InitialImageCut(img, cdim, newcdim):
 
 
 def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
-               rawlen_dist='log', ilen=256, cdim=[-180, 180, -60, 60],
+               rawlen_dist='log', ilen=256, cdim=[-180., 180., -60., 60.],
                arad=1737.4, minpix=0, tglen=256, binary=True, rings=True,
                ringwidth=1, truncate=True, amt=100, istart=0, seed=None,
                verbose=False):
@@ -1239,7 +1239,7 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         this size.  Default is 256.
     cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        LRO-Kaguya's [-180, 180, -60, 60].
+        LRO-Kaguya's [-180., 180., -60., 60.].
     arad : float. optional
         World radius in km.  Defaults to Moon radius (1737.4 km).
     minpix : int, optional
@@ -1390,7 +1390,7 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
 
 def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                       rawlen_dist='log', rawlen_coeff=[2., 1.5],
-                      ilen=256, cdim=[-180, 180, -60, 60],
+                      ilen=256, cdim=[-180., 180., -60., 60.],
                       arad=1737.4, minpix=0, tglen=256, ringwidth=1,
                       truncate=True, amt=100, istart=0, seed=None,
                       verbose=False):
@@ -1440,7 +1440,7 @@ def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         such that (rawlen, rawlen) is mapped to (ilen, ilen).  Default is
         256. cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        LRO-Kaguya's [-180, 180, -60, 60].
+        LRO-Kaguya's [-180., 180., -60., 60.].
     arad : float. optional
         World radius in km.  Defaults to Moon radius (1737.4 km).
     minpix : int, optional
