@@ -27,6 +27,7 @@ from __future__ import absolute_import, division, print_function
 
 from PIL import Image
 import make_input_data as mkin
+import time
 
 ########## Global Variables ##########
 
@@ -87,7 +88,7 @@ minpix = 1.
 # Radius of the world in km (1737.4 for Moon).
 R_km = 1737.4
 
-### Density map / mask arguments. ###
+### Target mask arguments. ###
 
 # If True, truncate mask where image has padding.
 truncate = True
@@ -101,6 +102,8 @@ verbose = True
 ########## Script ##########
 
 if __name__ == '__main__':
+
+    start_time = time.time()
 
     # Utilize mpi4py for multithreaded processing.
     if use_mpi4py:
@@ -131,3 +134,8 @@ if __name__ == '__main__':
                            ilen=ilen, cdim=sub_cdim, arad=R_km, minpix=minpix,
                            tglen=tglen, ringwidth=ringwidth, truncate=truncate,
                            amt=amt, istart=istart, verbose=verbose)
+
+    elapsed_time = time.time() - start_time
+    if verbose:
+        print("Time elapsed: {0:.1f} min".format(elapsed_time / 60.))
+
