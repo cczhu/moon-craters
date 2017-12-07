@@ -432,7 +432,7 @@ def WarpImage(img, iproj, iextent, oproj, oextent,
 
 
 def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
-                 rgcoeff=1.2, fillbg="white"):
+                 rgcoeff=1.2, fillbg="black"):
     """Wrapper for WarpImage that adds padding to warped image to make it the
     same size as the original.
 
@@ -456,7 +456,7 @@ def WarpImagePad(img, iproj, iextent, oproj, oextent, origin="upper",
         Fractional size increase of transformed image height.  Generically set
         to 1.2 to prevent loss of fidelity during transform (though some of it
         is inevitably lost due to warping).
-    fillbg : 'black' or 'white'; optional.
+    fillbg : 'black' or 'white', optional.
         Fills padding with either black (0) or white (255) values.  Default is
         black.
 
@@ -661,6 +661,7 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     if type(img) != Image.Image:
         img = Image.open(img).convert("L")
 
+    # Warp image.
     imgo, imgwshp, offset = WarpImagePad(img, iproj, iextent, oproj, oextent,
                                          origin=origin, rgcoeff=rgcoeff,
                                          fillbg="black")
@@ -692,9 +693,9 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     if distortion_coefficient < 0.7:
         raise ValueError("Distortion Coefficient cannot be"
                          " {0:.2f}!".format(distortion_coefficient))
-    pxperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
-                     dc=distortion_coefficient, a=arad)
-    ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pxperkm
+    pixperkm = km2pix(imgo.size[1], llbd[3] - llbd[2],
+                      dc=distortion_coefficient, a=arad)
+    ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pixperkm
 
     return [imgo, ctr_xy, distortion_coefficient]
 
@@ -941,7 +942,7 @@ def make_mask(craters, img, binary=True, rings=False, ringwidth=1,
 
 ############# Create dataset (and helper functions) #############
 
-def AddPlateCarree_XY(craters, imgdim, cdim=[-180, 180, -90, 90], 
+def AddPlateCarree_XY(craters, imgdim, cdim=[-180., 180., -90., 90.], 
                       origin="upper"):
     """Adds x and y pixel locations to craters dataframe.
 
@@ -953,7 +954,7 @@ def AddPlateCarree_XY(craters, imgdim, cdim=[-180, 180, -90, 90],
         Length and height of image, in pixels
     cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        [-180, 180, -90, 90].
+        [-180., 180., -90., 90.].
     origin : "upper" or "lower", optional
         Based on imshow convention for displaying image y-axis.
         "upper" means that [0,0] is upper-left corner of image;
@@ -996,8 +997,8 @@ def ResampleCraters(craters, llbd, imgheight, arad=1737.4, minpix=0):
     if minpix > 0:
         # Obtain pixel per km conversion factor.  Use latitude because Plate
         # Carree doesn't distort along this axis.
-        pxperkm = km2pix(imgheight, llbd[3] - llbd[2], dc=1., a=arad)
-        minkm = minpix / pxperkm
+        pixperkm = km2pix(imgheight, llbd[3] - llbd[2], dc=1., a=arad)
+        minkm = minpix / pixperkm
 
         # Remove craters smaller than pixel limit.
         ctr_sub = ctr_sub[ctr_sub["Diameter (km)"] >= minkm]
@@ -1036,7 +1037,7 @@ def InitialImageCut(img, cdim, newcdim):
 
 
 def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
-               rawlen_dist='log', ilen=256, cdim=[-180, 180, -60, 60],
+               rawlen_dist='log', ilen=256, cdim=[-180., 180., -60., 60.],
                arad=1737.4, minpix=0, tglen=256, binary=True, rings=True,
                ringwidth=1, truncate=True, amt=100, istart=0, seed=None,
                verbose=False):
@@ -1069,7 +1070,7 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         this size.  Default is 256.
     cdim : list-like, optional
         Coordinate limits (x_min, x_max, y_min, y_max) of image.  Default is
-        LRO-Kaguya's [-180, 180, -60, 60].
+        LRO-Kaguya's [-180., 180., -60., 60.].
     arad : float. optional
         World radius in km.  Defaults to Moon radius (1737.4 km).
     minpix : int, optional
@@ -1179,11 +1180,6 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         [imgo, ctr_xy, distortion_coefficient] = PlateCarree_to_Orthographic(
             im, None, llbd, ctr_sub, iglobe=iglobe, ctr_sub=True, arad=arad,
             origin=origin, rgcoeff=1.2, slivercut=0.5)
-
-        # Check imgo validity.
-        # if imgo is None:
-        #     raise TypeError("imgo is None!  This is because the aspect ratio "
-        #                     "of the image fell below height / width = 0.1.")
 
         if imgo is None:
             print("Discarding narrow image")

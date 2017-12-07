@@ -27,6 +27,7 @@ from __future__ import absolute_import, division, print_function
 
 from PIL import Image
 import make_input_data as mkin
+import time
 
 ########## Global Variables ##########
 
@@ -55,7 +56,7 @@ amt = 30000
 # will be scaled down to ilen). For Orthogonal projection, larger images are
 # distorted at their edges, so there is some trade-off between ensuring images
 # have minimal distortion, and including the largest craters in the image.
-rawlen_range = [512., 4096.]
+rawlen_range = [300, 4000]
 
 # Distribution to sample from rawlen_range - "uniform" for uniform, and "log"
 # for loguniform.
@@ -68,11 +69,11 @@ ilen = 256
 tglen = 256
 
 # [Min long, max long, min lat, max lat] dimensions of source image.
-source_cdim = [-180, 180, -60, 60]
+source_cdim = [-180., 180., -60., 60.]
 
 # [Min long, max long, min lat, max lat] dimensions of the region of the source
 # to use when randomly cropping.  Used to distinguish training from test sets.
-sub_cdim = [-180, 180, -60, 60]
+sub_cdim = [-180., 180., -60., 60.]
 
 # Minimum pixel diameter of craters to include in in the target.
 minpix = 1.
@@ -80,23 +81,13 @@ minpix = 1.
 # Radius of the world in km (1737.4 for Moon).
 R_km = 1737.4
 
-### Density map / mask arguments. ###
-
-# Type of target to make - "dens" for density map, "mask" for mask.
-maketype = "mask"
+### Target mask arguments. ###
 
 # If True, truncate mask where image has padding.
 truncate = True
 
-# If True, use rings.  If False, use filled circles.
-rings = True
-
 # If rings = True, thickness of ring in pixels.
 ringwidth = 1
-
-# If True, sets all non-zero target pixels to unity (if False, circle overlaps
-# and ring intersections will have larger values.)
-binary = True
 
 # If True, script prints out the image it's currently working on.
 verbose = True
@@ -104,6 +95,8 @@ verbose = True
 ########## Script ##########
 
 if __name__ == '__main__':
+
+    start_time = time.time()
 
     # Utilize mpi4py for multithreaded processing.
     if use_mpi4py:
@@ -131,6 +124,10 @@ if __name__ == '__main__':
     # Generate input images.
     mkin.GenDataset(img, craters, outhead, rawlen_range=rawlen_range,
                     rawlen_dist=rawlen_dist, ilen=ilen, cdim=sub_cdim,
-                    arad=R_km, minpix=minpix, tglen=tglen, binary=binary,
-                    rings=rings, ringwidth=ringwidth, truncate=truncate,
+                    arad=R_km, minpix=minpix, tglen=tglen, binary=True,
+                    rings=True, ringwidth=ringwidth, truncate=truncate,
                     amt=amt, istart=istart, verbose=verbose)
+
+    elapsed_time = time.time() - start_time
+    if verbose:
+        print("Time elapsed: {0:.1f} min".format(elapsed_time / 60.))
