@@ -777,6 +777,10 @@ def PlateCarree_to_Orthographic_Cropped(img, ilen, llbd, craters, iglobe=None,
         Craters with transformed x, y pixel positions and pixel radii.
     pixperkm : float
         Conversion factor between km and image pixel.
+    imgo_uc_size : tuple
+        Size of imgo before it was cropped.
+    centrallonglat_xy : pandas.DataFrame
+        Central longitude and latitude, transformed to x, y pixel coords.
     """
 
     # If user doesn't provide Moon globe properties.
@@ -849,6 +853,11 @@ def PlateCarree_to_Orthographic_Cropped(img, ilen, llbd, craters, iglobe=None,
                       dc=distortion_coefficient, a=arad)
     ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pixperkm
 
+    # Determine x, y position of central lat/long.
+    centrallonglat = pd.DataFrame({"Long": [xll[4]], "Lat": [yll[4]]})
+    centrallonglat_xy = WarpCraterLoc(centrallonglat, geoproj, oproj, oextent,
+                                      imgo.size, llbd=None, origin=origin)
+
     # Determine x, y offset for central region of image.
     offset = [(imgo.size[0] - ilen) // 2, (imgo.size[1] - ilen) // 2]
     cropbox = [offset[0], offset[1], offset[0] + ilen, offset[1] + ilen]
@@ -866,7 +875,11 @@ def PlateCarree_to_Orthographic_Cropped(img, ilen, llbd, craters, iglobe=None,
     ctr_xy.loc[:, "x"] -= offset[0]
     ctr_xy.loc[:, "y"] -= offset[1]
 
-    return [imgo_crop, ctr_xy, pixperkm]
+    # Shift central long/lat
+    centrallonglat_xy.loc[:, "x"] -= offset[0]
+    centrallonglat_xy.loc[:, "y"] -= offset[1]
+
+    return [imgo_crop, ctr_xy, pixperkm, imgo.size, centrallonglat_xy]
 
 ############# Create target dataset (and helper functions) #############
 
@@ -1496,11 +1509,15 @@ def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
     imgs_h5_tgts = imgs_h5.create_dataset("target_masks", (amt, tglen, tglen),
                                           dtype='float32')
     imgs_h5_tgts.attrs['definition'] = "Target mask dataset."
-    imgs_h5_box = imgs_h5.create_group("pix_bounds_large_img")
-    imgs_h5_box.attrs['definition'] = (
-        "Pixel bounds of the large image INITIALLY sampled from the Global "
-        "DEM.  This sampled image was then transformed and further cropped to "
-        "produce the input image.")
+    imgs_h5_llbd = imgs_h5.create_group("longlat_bounds")
+    imgs_h5_llbd.attrs['definition'] = ("(long min, long max, lat min, "
+                                        "lat max) of the PRE-CROP image.")
+    imgs_h5_pcsize = imgs_h5.create_group("precrop_size")
+    imgs_h5_pcsize.attrs['definition'] = ("(width, height) of PRE-CROP image, "
+                                          "in pixels.")
+    imgs_h5_cll = imgs_h5.create_group("cll_xy")
+    imgs_h5_cll.attrs['definition'] = ("Pixel coordinates of central long /"
+                                       " lat within CROP image.")
     imgs_h5_ppkm = imgs_h5.create_group("pixperkm")
     imgs_h5_ppkm.attrs['definition'] = ("Conversion factor from km to image "
                                         "pixel.")
@@ -1547,9 +1564,10 @@ def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                                   minpix=minpix)
 
         # Convert Plate Carree to Orthographic.
-        [imgo, ctr_xy, pixperkm] = PlateCarree_to_Orthographic_Cropped(
-            im, ilen, llbd, ctr_sub, iglobe=iglobe, arad=arad, origin=origin,
-            rgcoeff=1.3, paderr=0.5)
+        [imgo, ctr_xy, pixperkm, imgo_uc_size, clonglat_xy] = (
+            PlateCarree_to_Orthographic_Cropped(
+                im, ilen, llbd, ctr_sub, iglobe=iglobe, arad=arad,
+                origin=origin, rgcoeff=1.3, paderr=0.5))
 
         imgo_arr = np.asanyarray(imgo)
         assert imgo_arr.sum() > 0, ("Sum of imgo is zero!  There likely was "
@@ -1569,8 +1587,13 @@ def GenCroppedDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         imgs_h5_inputs[i, ...] = imgo_arr
         imgs_h5_tgts[i, ...] = mask
 
-        sds_box = imgs_h5_box.create_dataset(img_number, (4,), dtype='int32')
-        sds_box[...] = box
+        sds_llbd = imgs_h5_llbd.create_dataset(img_number, (4,), dtype='float')
+        sds_llbd[...] = llbd
+        sds_pcsize = imgs_h5_pcsize.create_dataset(img_number, (2,),
+                                                   dtype='int')
+        sds_pcsize[...] = np.array(imgo_uc_size)
+        sds_cll = imgs_h5_cll.create_dataset(img_number, (2,), dtype='float')
+        sds_cll[...] = clonglat_xy.loc[:, ['x', 'y']].as_matrix().ravel()
         sds_ppkm = imgs_h5_ppkm.create_dataset(img_number, (1,), dtype='float')
         sds_ppkm[...] = np.array([pixperkm])
 
