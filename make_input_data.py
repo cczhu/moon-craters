@@ -621,6 +621,8 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
     distortion_coefficient : float
         Ratio between the central heights of the transformed image and original
         image.
+    centrallonglat_xy : pandas.DataFrame
+        xy position of the central longitude and latitude.
     """
 
     # If user doesn't provide Moon globe properties.
@@ -697,7 +699,16 @@ def PlateCarree_to_Orthographic(img, oname, llbd, craters, iglobe=None,
                       dc=distortion_coefficient, a=arad)
     ctr_xy["Diameter (pix)"] = ctr_xy["Diameter (km)"] * pixperkm
 
-    return [imgo, ctr_xy, distortion_coefficient]
+    # Determine x, y position of central lat/long.
+    centrallonglat = pd.DataFrame({"Long": [xll[4]], "Lat": [yll[4]]})
+    centrallonglat_xy = WarpCraterLoc(centrallonglat, geoproj, oproj, oextent,
+                                      imgwshp, llbd=llbd_in, origin=origin)
+
+    # Shift central long/lat
+    centrallonglat_xy.loc[:, "x"] += offset[0]
+    centrallonglat_xy.loc[:, "y"] += offset[1]
+
+    return [imgo, ctr_xy, distortion_coefficient, centrallonglat_xy]
 
 ############# Create target dataset (and helper functions) #############
 
@@ -1139,6 +1150,9 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
     imgs_h5_dc = imgs_h5.create_group("pix_distortion_coefficient")
     imgs_h5_dc.attrs['definition'] = ("Distortion coefficient due to "
                                       "projection transformation.")
+    imgs_h5_cll = imgs_h5.create_group("cll_xy")
+    imgs_h5_cll.attrs['definition'] = ("(x, y) pixel coordinates of the "
+                                       "central long / lat.")
     craters_h5 = pd.HDFStore(outhead + '_craters.hdf5', 'w')
 
     # Zero-padding for hdf5 keys.
@@ -1177,9 +1191,10 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
                                   minpix=minpix)
 
         # Convert Plate Carree to Orthographic.
-        [imgo, ctr_xy, distortion_coefficient] = PlateCarree_to_Orthographic(
-            im, None, llbd, ctr_sub, iglobe=iglobe, ctr_sub=True, arad=arad,
-            origin=origin, rgcoeff=1.2, slivercut=0.5)
+        [imgo, ctr_xy, distortion_coefficient, clonglat_xy] = (
+            PlateCarree_to_Orthographic(
+                im, None, llbd, ctr_sub, iglobe=iglobe, ctr_sub=True,
+                arad=arad, origin=origin, rgcoeff=1.2, slivercut=0.5))
 
         if imgo is None:
             print("Discarding narrow image")
@@ -1208,6 +1223,8 @@ def GenDataset(img, craters, outhead, rawlen_range=[1000, 2000],
         sds_llbd[...] = llbd
         sds_dc = imgs_h5_dc.create_dataset(img_number, (1,), dtype='float')
         sds_dc[...] = np.array([distortion_coefficient])
+        sds_cll = imgs_h5_cll.create_dataset(img_number, (2,), dtype='float')
+        sds_cll[...] = clonglat_xy.loc[:, ['x', 'y']].as_matrix().ravel()
 
         craters_h5[img_number] = ctr_xy
 
