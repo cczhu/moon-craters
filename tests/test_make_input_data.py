@@ -75,11 +75,12 @@ class TestCoordinateTransforms(object):
     """Tests pix2coord and coord2pix."""
 
     def setup(self):
-        origin = np.random.uniform(-30, 30, 2)
-        extent = np.random.uniform(0, 45, 2)
+        np.random.seed(9590)
+        origin = np.random.uniform(-30, 30, 1000)
+        extent = np.random.uniform(0, 45, 1000)
         self.cdim = [origin[0], origin[0] + extent[0],
                      origin[1], origin[1] + extent[1]]
-        self.imgdim = np.random.randint(100, high=200, size=2)
+        self.imgdim = np.random.randint(100, high=200, size=1000)
 
         self.cx = np.array(
             [self.cdim[1], np.random.uniform(self.cdim[0] + 1, self.cdim[1])])
@@ -129,6 +130,20 @@ class InputImgTest(object):
         self.craters = mkin.ReadLROCHeadCombinedCraterCSV(
             filelroc="../LROCCraters.csv", filehead="../HeadCraters.csv",
             sortlat=True)
+        self.rawlen_range=[256, 512]
+        self.npseed = 1337
+
+        np.random.seed(self.npseed)
+
+        rawlen_min = np.log10(self.rawlen_range[0])
+        rawlen_max = np.log10(self.rawlen_range[1])
+
+        rawlen = int(10**np.random.uniform(rawlen_min, rawlen_max))
+        xc = np.random.randint(0, self.img.size[0] - rawlen)
+        yc = np.random.randint(0, self.img.size[1] - rawlen)
+        box = np.array([xc, yc, xc + rawlen, yc + rawlen], dtype='int32')
+        # THIS WILL BECOME WRONG!
+        assert np.all(box == np.array([860, 1256, 1166, 1562]))
 
         # Take top edge of long-lat bounds.
         ix = np.array([0, 300])
