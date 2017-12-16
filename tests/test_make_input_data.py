@@ -1,5 +1,6 @@
+from __future__ import absolute_import, division, print_function
+import sys
 import pytest
-import make_input_data as mkin
 import re
 import pandas as pd
 import numpy as np
@@ -7,6 +8,8 @@ import cartopy.crs as ccrs
 import cartopy.img_transform as cimg
 from PIL import Image
 from scipy import signal
+sys.path.append('../')
+import make_input_data as mkin
 
 
 class TestCatalogue(object):
@@ -14,9 +17,9 @@ class TestCatalogue(object):
 
     def setup(self):
         # Head et al. dataset.
-        head = pd.read_csv('./HeadCraters.csv', header=0,
+        head = pd.read_csv('../HeadCraters.csv', header=0,
                            names=['Long', 'Lat', 'Diameter (km)'])
-        lroc = pd.read_csv('./LROCCraters.csv', usecols=range(2, 5), header=0)
+        lroc = pd.read_csv('../LROCCraters.csv', usecols=range(2, 5), header=0)
 
         self.lrochead_t = pd.concat([lroc, head], axis=0, ignore_index=True,
                                     copy=True)
@@ -26,7 +29,7 @@ class TestCatalogue(object):
         # Salamuniccar et al. dataset.
         sala_names = ("Long", "Lat", "Diameter (km)", "Name")
         sala_types = (float, float, float, str)
-        sala = pd.read_csv('./LU78287GT.csv', usecols=(1, 2, 4, 7), header=0,
+        sala = pd.read_csv('../LU78287GT.csv', usecols=(1, 2, 4, 7), header=0,
                            engine="c", encoding="ISO-8859-1", names=sala_names,
                            dtype=dict(zip(sala_names, sala_types)))
         sala["Name"] = sala["Name"].str.split(":").str.get(0)
@@ -49,12 +52,18 @@ class TestCatalogue(object):
         self.lroclu_t.reset_index(inplace=True, drop=True)
 
     def test_dataframes_equal(self):
-        lroclu = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=True,
-                                                  sortlat=True)
-        lroclu_feat = mkin.ReadLROCLUCombinedCraterCSV(dropfeatures=False,
-                                                       sortlat=True)
-        lrochead = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=True)
-        lrochead_nosort = mkin.ReadLROCHeadCombinedCraterCSV(sortlat=False)
+        lroclu = mkin.ReadLROCLUCombinedCraterCSV(
+            filelroc="../LROCCraters.csv", filelu="../LU78287GT.csv",
+            dropfeatures=True, sortlat=True)
+        lroclu_feat = mkin.ReadLROCLUCombinedCraterCSV(
+            filelroc="../LROCCraters.csv", filelu="../LU78287GT.csv",
+            dropfeatures=False, sortlat=True)
+        lrochead = mkin.ReadLROCHeadCombinedCraterCSV(
+            filelroc="../LROCCraters.csv", filehead="../HeadCraters.csv",
+            sortlat=True)
+        lrochead_nosort = mkin.ReadLROCHeadCombinedCraterCSV(
+            filelroc="../LROCCraters.csv", filehead="../HeadCraters.csv",
+            sortlat=False)
 
         assert np.all(lrochead == self.lrochead_t)
         assert np.all(lroclu == self.lroclu_t)
@@ -63,8 +72,7 @@ class TestCatalogue(object):
 
 
 class TestCoordinateTransforms(object):
-    """Tests pix2coord and coord2pix
-    """
+    """Tests pix2coord and coord2pix."""
 
     def setup(self):
         origin = np.random.uniform(-30, 30, 2)
@@ -113,14 +121,16 @@ class TestCoordinateTransforms(object):
         assert np.isclose(mykmppix, kmppix, rtol=1e-7, atol=1e-10)
 
 
-class WarpTest(object):
+class InputImgTest(object):
 
     def setup(self):
-
         self.img = Image.open(
             'LunarLROLrocKaguya_1180mperpix_downsamp.png').convert("L")
+        self.craters = mkin.ReadLROCHeadCombinedCraterCSV(
+            filelroc="../LROCCraters.csv", filehead="../HeadCraters.csv",
+            sortlat=True)
 
-        # Take top edge of long-lat bounds
+        # Take top edge of long-lat bounds.
         ix = np.array([0, 300])
         iy = np.array([0, 300])
         cdim = [-180, 180, -60, 60]
@@ -129,8 +139,8 @@ class WarpTest(object):
         self.llbd = np.r_[llong, llat[::-1]]
 
         self.iglobe = ccrs.Globe(semimajor_axis=1737400, 
-                        semiminor_axis=1737400,
-                        ellipse=None)
+                                 semiminor_axis=1737400,
+                                 ellipse=None)
 
         self.geoproj = ccrs.Geodetic(globe=self.iglobe)
         self.iproj = ccrs.PlateCarree(globe=self.iglobe)
@@ -159,6 +169,24 @@ class WarpTest(object):
         self.craters = pd.DataFrame(np.vstack([xllr, yllr]).T, 
                                 columns=["Long", "Lat"])
         self.craters["Diameter (km)"] = [10, 10, 10]
+
+    def test_regrid_shape_aspect(self):
+        # Wide image with x / y aspect ratio of 2.25.
+        target_extent = 1737 * np.array([0.7, 1.6, 0.4, 0.8])
+        regrid_shape = mkin.regrid_shape_aspect(256, target_extent)
+        assert int(regrid_shape[1]) == 256
+        assert regrid_shape[0] / regrid_shape[1] == (
+            (target_extent[1] - target_extent[0]) /
+            (target_extent[3] - target_extent[2]))
+
+        # Tall image with x / y aspect ratio of 
+        target_extent = 1377 * np.array([0.2, 1.1, 0.4, 3.8])
+        regrid_shape = mkin.regrid_shape_aspect(256, target_extent)
+        assert int(regrid_shape[0]) == 256
+        regrid_aspect = regrid_shape[0] / regrid_shape[1]
+        expected_aspect = ((target_extent[1] - target_extent[0]) /
+                           (target_extent[3] - target_extent[2]))
+        assert abs(regrid_aspect - expected_aspect) / expected_aspect < 1e-8
 
     def test_warpimage(self):
 
